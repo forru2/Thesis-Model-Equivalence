@@ -7,6 +7,8 @@ Created on Sun Nov  9 13:11:57 2025
 
 import pandas as pd
 import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 from RuleTree import RuleTreeClassifier
 from HybridReaders import read_wdbc, read_compass, read_german_credit, read_vehicle
 from sklearn.model_selection import train_test_split
@@ -17,12 +19,12 @@ from sklearn.preprocessing import StandardScaler
 from scipy.stats import kendalltau, spearmanr, pearsonr
 import random as rd
 from joblib import dump, load
-from shap import TreeExplainer, LinearExplainer, KernelExplainer, kmeans
+from shap import TreeExplainer, LinearExplainer, KernelExplainer
 #import os
 import inspect
 from fairlearn.metrics import demographic_parity_difference, demographic_parity_ratio, equal_opportunity_difference, equal_opportunity_ratio, equalized_odds_difference, equalized_odds_ratio
 from fairlearn.metrics import selection_rate, MetricFrame
-from fairlearn import metrics
+#from fairlearn import metrics
 #from aif360.metrics import ClassificationMetric
 #from aif360.datasets import BinaryLabelDataset
 
@@ -193,7 +195,7 @@ def confidence_similarity(models, X_ts, y_true, metric = spearmanr, preds_concor
     probs1, probs2 = probs
     
     #filtriamo per predizioni concordanti o discordanti
-    m1_probs, m2_probs = prediction_concordance_filter(models, (probs1, probs2), concordant = preds_concordance)
+    m1_probs, m2_probs = prediction_concordance_filter(models, X_ts, (probs1, probs2), concordant = preds_concordance)
     #in caso di classificazione binaria
     if m1_probs.shape[1] == 2:
         
@@ -208,48 +210,86 @@ def confidence_similarity(models, X_ts, y_true, metric = spearmanr, preds_concor
             
             results.append(result)
         return np.array(results)
+    
+
+
+#sceglie il numero di centroidi adatto basandosi sulla silhouette
+def choose_centroids(data, min_centroids, max_centroids):
+    best_n = min_centroids
+    best_score = -1
+    for n in range(min_centroids, max_centroids+1):
+        kmeans = KMeans(n_clusters = n, n_init = 10, random_state = 0).fit(data)
+        score = silhouette_score(data, kmeans.labels_)
+    
+        if score > best_score:
+            best_score = score
+            best_n = n
+    return best_n
+
+      
+#filtra i centroidi
+def kmeans_centroids(data, min_centroids, max_centroids, n_init = 10):
+    
+    n_clusters = choose_centroids(data, min_centroids, max_centroids)
+    kmeans = KMeans(n_clusters = n_clusters, n_init = n_init, random_state = 0).fit(data)
+    
+    return kmeans.cluster_centers_
+
 
 #rende gli shap values per le features di un modello
-def get_shaps(model, X_ts, expl = KernelExplainer):
+def get_shaps(model, X_ts, min_centroids = 2, max_centroids = 50, expl = KernelExplainer, sampled_results = False):
     
-    #un warning di shap l'ha consigliato per velocizzare i calcoli dei valori attesi sulle previsioni dei modelli per il calcolo degli shap vals
-    #il kernelExplainer simula l'assenza delle features, quindi ne ha bisogno
-    background = kmeans(X_ts, 20)
-    if expl == LinearExplainer:
-        explainer = expl(model, masker = X_ts)
+    background = kmeans_centroids(X_ts, min_centroids, max_centroids)
+    n_classes = model.predict_proba(X_ts[:1]).shape[1]
+    if expl == KernelExplainer:
+        if n_classes == 2:
+            explainer = expl(model.predict, background)
+        else:
+            explainer = expl(model.predict_proba, background)
     else:
-        explainer = expl(model.predict_proba, background)
-    shaps = explainer(X_ts).values #direttamente .values perché mi interessano solo quelli
+        explainer = expl(model, masker = X_ts)
+    
+    #scegliamo se avere gli shap solo dei centroidi
+    if sampled_results:
+        shaps = explainer(background).values 
+    else:
+        shaps = explainer(X_ts).values
     return shaps
 
 
 #considera la somiglianza dell'influenza delle features instance per instance
 #definibile sia con misure di correlazione che di errore
-def feature_influence_similarity(models, X_ts, explainer = KernelExplainer, metric = pearsonr, preds_concordance = True):    
+def shaps_similarity(models, X_ts,
+                     explainer = KernelExplainer, 
+                     metric = pearsonr, 
+                     preds_concordance = True,
+                     min_centroids = 2, 
+                     max_centroids = 50, 
+                     sampled_results = False):    
     #filtriamo
-    X_ts = prediction_concordance_filter(models, X_ts)
+    X_ts = prediction_concordance_filter(models, X_ts, X_ts, concordant = preds_concordance)
     
-    shaps1 = get_shaps(models[0], X_ts, expl = explainer)
-    shaps2 = get_shaps(models[1], X_ts, expl = explainer)
+    shaps1 = get_shaps(models[0], X_ts, min_centroids, max_centroids, expl = explainer, sampled_results = sampled_results)
+    shaps2 = get_shaps(models[1], X_ts, min_centroids, max_centroids, expl = explainer, sampled_results = sampled_results)
 
-    tot_correlations = []
+    tot_measures = []
     n_classes = shaps1.shape[2] if shaps1.ndim == 3 else 1
     for i in range(shaps1.shape[0]):
         #multiclasse
         if n_classes > 1:
 
-            instance_correlations = []
+            instance_measures = []
             for c in range(n_classes): 
-                corr = apply_metric(shaps1[i, :, c], shaps2[i, :, c], metric = metric)
+                measure = apply_metric(shaps1[i, :, c], shaps2[i, :, c], metric = metric)
                 
-                instance_correlations.append(corr)
-            tot_correlations.append(instance_correlations)
+                instance_measures.append(measure)
+            tot_measures.append(instance_measures)
         #binario
         else:
-            corr = apply_metric(shaps1[i, :], shaps2[i, :], metric = metric)
-            tot_correlations.append(corr)
+            measure = apply_metric(shaps1[i, :], shaps2[i, :], metric = metric)
+            tot_measures.append(measure)
             
-    return np.array(tot_correlations)
+    return np.array(tot_measures)
 
 
 
@@ -310,7 +350,33 @@ def features_usage_rtc(model, feature_names):
     return {'used_features': useful, 'ignored_features': ignored}
 
 
+#calcola la % di overlap di sue set con lunghezze diverse
+def overlap(a, b):
+    overlap_a = len(set(a) & set(b)) / len(set(a))
+    overlap_b = len(set(a) & set(b)) / len(set(b))
+ 
+    return (overlap_a + overlap_b) / 2
 
+def jaccard(a,b):
+    return len(set(a) & set(b)) / len(set(a) | set(b))
+
+#date predizioni uguali
+def neighbours_similarity(models, X_ts, preds_concordant = True, metric = jaccard):
+    
+    X_ts = prediction_concordance_filter(models, X_ts, X_ts, concordant = preds_concordant)
+    
+    _, centroids1 = models[0].kneighbors(X_ts)
+    _, centroids2 = models[1].kneighbors(X_ts)
+    
+    n_similarities = []
+    #per ogni instance calcolo la similarità tra set di centroidi
+    for i in range(len(X_ts)):
+        inst_centroids1 = centroids1[i]
+        inst_centroids2 = centroids2[i]
+        similarity = metric(inst_centroids1, inst_centroids2)
+        n_similarities.append(similarity)
+        
+    return np.array(n_similarities)
 
 if __name__=='__main__':
     #print(help(ClassificationMetric))
@@ -328,10 +394,11 @@ if __name__=='__main__':
                      #save_path = 'C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german'
                      #)
     
+    X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_tr.csv', delimiter=',', skip_header=1)
     X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_ts.csv', delimiter=',', skip_header=1)
     y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_1.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_2.joblib')
+    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_knn_1.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_knn_1.joblib')
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
     
@@ -362,12 +429,19 @@ if __name__=='__main__':
     assert similarity == 1, 'le performance dello stesso modello devono essere uguali'
     print(similarity)
 
+    print(confidence_similarity(models, X_ts, y_true))
+    assert confidence_similarity(models, X_ts, y_true) == 1
     
-    feature_influence_similarity(models, X_ts)
+    x = shaps_similarity(models, X_ts, sampled_results=True)
+    print(x)
     
-    shaps = get_shaps(m1, X_ts, expl = KernelExplainer)
-    print(shaps[1, :, 1])
+    centr = kmeans_centroids(X_ts, min_centroids = 2, max_centroids = 50)
+    print(centr.shape)
+
+    shaps = get_shaps(m1, X_ts, expl = KernelExplainer, sampled_results = True)
     print(shaps.shape)
+    print(shaps[1, :, 1])
+    
     
     fairness = model_fairness(m1, X_ts, y_true, sensitive_features = X_ts_df['purpose_education'])
     print(fairness)
@@ -404,9 +478,32 @@ if __name__=='__main__':
     imp = feature_importance_rtc(m1, feature_names = df.columns[:-1])  
     #print(set(imp[imp !=0].index))
     
-    used = features_usage(m1, feature_names = df.columns[:-1])
+    used = features_usage_rtc(m1, feature_names = df.columns[:-1])
     print(used)
     
+    a = {1,2,3}
+    b= {1,2,5,7}
+    print(overlap(a,b))
+
+    sim = neighbours_similarity(models, X_ts)
+    print(len(sim))
+    assert np.all(sim == 1)
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
