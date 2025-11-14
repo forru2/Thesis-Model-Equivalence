@@ -247,7 +247,7 @@ def get_shaps(model, X_ts, min_centroids = 2, max_centroids = 50, expl = KernelE
         else:
             explainer = expl(model.predict_proba, background)
     else:
-        explainer = expl(model, masker = X_ts)
+        explainer = expl(model)
     
     #scegliamo se avere gli shap solo dei centroidi
     if sampled_results:
@@ -256,6 +256,7 @@ def get_shaps(model, X_ts, min_centroids = 2, max_centroids = 50, expl = KernelE
         shaps = explainer(X_ts).values
     return shaps
 
+#masker = X_ts
 
 #considera la somiglianza dell'influenza delle features instance per instance
 #definibile sia con misure di correlazione che di errore
@@ -350,33 +351,8 @@ def features_usage_rtc(model, feature_names):
     return {'used_features': useful, 'ignored_features': ignored}
 
 
-#calcola la % di overlap di sue set con lunghezze diverse
-def overlap(a, b):
-    overlap_a = len(set(a) & set(b)) / len(set(a))
-    overlap_b = len(set(a) & set(b)) / len(set(b))
- 
-    return (overlap_a + overlap_b) / 2
 
-def jaccard(a,b):
-    return len(set(a) & set(b)) / len(set(a) | set(b))
 
-#date predizioni uguali
-def neighbours_similarity(models, X_ts, preds_concordant = True, metric = jaccard):
-    
-    X_ts = prediction_concordance_filter(models, X_ts, X_ts, concordant = preds_concordant)
-    
-    _, centroids1 = models[0].kneighbors(X_ts)
-    _, centroids2 = models[1].kneighbors(X_ts)
-    
-    n_similarities = []
-    #per ogni instance calcolo la similarità tra set di centroidi
-    for i in range(len(X_ts)):
-        inst_centroids1 = centroids1[i]
-        inst_centroids2 = centroids2[i]
-        similarity = metric(inst_centroids1, inst_centroids2)
-        n_similarities.append(similarity)
-        
-    return np.array(n_similarities)
 
 if __name__=='__main__':
     #print(help(ClassificationMetric))
@@ -397,8 +373,8 @@ if __name__=='__main__':
     X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_tr.csv', delimiter=',', skip_header=1)
     X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_ts.csv', delimiter=',', skip_header=1)
     y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_knn_1.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_knn_1.joblib')
+    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_1.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_1.joblib')
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
     
@@ -438,7 +414,7 @@ if __name__=='__main__':
     centr = kmeans_centroids(X_ts, min_centroids = 2, max_centroids = 50)
     print(centr.shape)
 
-    shaps = get_shaps(m1, X_ts, expl = KernelExplainer, sampled_results = True)
+    shaps = get_shaps(m1, X_ts, expl = TreeExplainer, sampled_results = True)
     print(shaps.shape)
     print(shaps[1, :, 1])
     
