@@ -337,13 +337,46 @@ def tree_depth(node):
     
     return 1 + max(left_depth, right_depth)
 
-def feature_importance_rtc(model, feature_names):
+#conta il numero di nodi
+def count_nodes_rtc(node):
+    if node is None:
+        return 0
     
-    importances = model.compute_feature_importances()
-    return pd.Series(importances, index=feature_names)
+    left_count = count_nodes_rtc(node["left_node"])
+    right_count = count_nodes_rtc(node["right_node"])
+    
+    return 1 + left_count + right_count
+
+#conta il numero di regole contanto le foglie
+def number_of_rules(model):
+    return len(model.get_leaf_nodes())
+
+
+def tree_complexity(model, node):
+    return {
+        'depth': tree_depth(node),
+        'n_nodes': count_nodes_rtc(node),
+        'n_rules': number_of_rules(model)
+        }
+
+#calcola l'importanza delle features, di default instance per instance
+def feature_importance_rtc(model, X_ts, feature_names, local = True):
+    
+    if local:
+        importances = model.local_interpretation(X_ts)[2]
+        return importances    
+    else:
+        importances = model.compute_feature_importances()
+        return pd.Series(importances, index=feature_names)
+
+def feature_importance_similarity_rtc():
+    pass
+
+def local_feature_usage():
+    pass
 
 #trova le features usate e non usate dal modello
-def features_usage_rtc(model, feature_names):
+def global_features_usage(model, feature_names):
     
     importances = feature_importance_rtc(model, feature_names)
     useful = list(importances[importances != 0].index)
@@ -374,7 +407,7 @@ if __name__=='__main__':
     X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_ts.csv', delimiter=',', skip_header=1)
     y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_y_ts.csv', delimiter=',', skip_header=1)
     m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_1.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_1.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_3.joblib')
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
     
@@ -439,52 +472,46 @@ if __name__=='__main__':
     print(type(fairness))
 
 
-    rules = m2.get_rules(columns_names=df.columns)
+    rules = m1.get_rules(columns_names=df.columns)
     rules
     print(rules.keys())
-    print(rules['node_id'])
-    print(rules['left_node']['left_node']['left_node']['node_id'])
+    print(rules['feature_name'], rules['threshold'])
+    print(rules['left_node']['left_node']['left_node']['is_leaf'])
     rules = m2.get_rules(columns_names=df.columns)
+    
     tree_depth(rules)
+    number_of_rules(m2)
+    count_nodes_rtc(rules)
+    print(tree_complexity(m2, rules))
+    
     m2.print_rules(rules, columns_names=df.columns)
-    m2.get_predicates()['R']
+    m2.get_leaf_nodes()
 
     help(RuleTreeClassifier())
+    print(inspect.getsource(RuleTreeClassifier.make_split))
     
-    imp = feature_importance_rtc(m1, feature_names = df.columns[:-1])  
-    #print(set(imp[imp !=0].index))
     
     used = features_usage_rtc(m1, feature_names = df.columns[:-1])
     print(used)
     
-    a = {1,2,3}
-    b= {1,2,5,7}
-    print(overlap(a,b))
-
-    sim = neighbours_similarity(models, X_ts)
-    print(len(sim))
-    assert np.all(sim == 1)
     
 
+    for el in m2.local_interpretation(X_ts):
+        print(el.shape)
+    
+    m2.local_interpretation(X_ts)[2][1]
+    len(m2.local_interpretation(X_ts))
+
+    print(feature_importance_rtc(m2, X_ts, feature_names = df.columns[:-1]))
 
 
+def feature_importance_similarity_rtc():
+    pass
 
+def local_feature_usage():
+    pass
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+def local_path():
+    pass
 
 
