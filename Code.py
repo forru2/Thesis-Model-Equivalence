@@ -23,7 +23,7 @@ from shap import TreeExplainer, LinearExplainer, KernelExplainer
 #import os
 import inspect
 from fairlearn.metrics import demographic_parity_difference, demographic_parity_ratio, equal_opportunity_difference, equal_opportunity_ratio, equalized_odds_difference, equalized_odds_ratio
-from fairlearn.metrics import selection_rate, MetricFrame, true_positive_rate, true_negative_rate
+from fairlearn.metrics import selection_rate, MetricFrame, true_positive_rate, false_positive_rate
 #from fairlearn import metrics
 #from aif360.metrics import ClassificationMetric
 #from aif360.datasets import BinaryLabelDataset
@@ -311,13 +311,13 @@ def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics = selecti
                            )
     return explorer.by_group
 
-#mi calcola si equal opportunity (TPR) che predictive equality (TNR)
-def relaxed_equalized_odds_diff(model, X_ts, y_true, sensitive_features, metrics = true_negative_rate):
+#mi calcola la predictive equality (FPR)
+def predictive_equality_diff(model, X_ts, y_true, sensitive_features):
     
-    true_rates = fairness_explorer(model, X_ts, y_true, sensitive_features, metrics = metrics)
+    true_rates = fairness_explorer(model, X_ts, y_true, sensitive_features, metrics = false_positive_rate)
     return true_rates.difference()
     
-
+#mi calcola la demographic parity diff, equalized odds diff e 
 def model_fairness(model, X_ts, y_true, sensitive_features, metric = demographic_parity_difference):
     
     y_pred, _ = predictions(model, X_ts)
@@ -340,15 +340,20 @@ def model_fairness_collection(model, X_ts, y_true, sensitive_features, metrics: 
 
 #FAMILY SPECIFIC
 
+#mi rende il numero di vicini
+def knn_local_complexity(model):
+    return model.n_neighbors()
+
 #calcola l'altezza del rtc
 def tree_depth(node):
-    if node is None:
+    if node is None or node["is_leaf"]:
         return 0
     
     left_depth = tree_depth(node["left_node"])
     right_depth = tree_depth(node["right_node"])
     
     return 1 + max(left_depth, right_depth)
+
 
 #conta il numero di nodi
 def count_nodes_rtc(node):
@@ -360,12 +365,21 @@ def count_nodes_rtc(node):
     
     return 1 + left_count + right_count
 
+#calcola la lunghezza dei path per ogni instance
+def path_lengths(model, X_ts):
+        leaf_indexes = model.apply(X_ts)
+        n_instances = range(leaf_indexes.shape[0])
+        path_lengths = [len(leaf_indexes[idx]) - 1 for idx in n_instances]
+        
+        return np.array(path_lengths)
 
-def tree_complexity(model, node):
+#valuta la complessità del rtc consideranco la profondità, il numero di nodi e il numero di regole
+def tree_complexity(model, node, X_ts):
     return {
         'depth': tree_depth(node),
         'number_of_nodes': count_nodes_rtc(node),
-        'number_of_rules': len(model.get_leaf_nodes())
+        'number_of_rules': len(model.get_leaf_nodes()),
+        'path_lengths': path_lengths(model, X_ts)
         }
 
 #calcola l'importanza delle features instance per instance come shap
@@ -376,6 +390,25 @@ def feature_importance_rtc(model, X_ts, multiclass = False):
         importances = model.local_interpretation(X_ts)[2][:, :, 1]
     
     return importances  
+
+#valuta la complessità del lr considerando il numero di nonzero coeff e la magnitudine dei coeff
+def lr_complexity(model, p = 2, multiclass = False):
+    coefficients = model.coef_
+    
+    if not multiclass:
+        nonzero_coefficients = np.count_nonzero(coefficients)
+        magnitude = np.linalg.norm(coefficients, ord = p)
+    
+    #calcolo le misure classe per classe
+    else:
+        n_classes = range(coefficients.shape[0])
+        nonzero_coefficients = [np.count_nonzero(coefficients[cl]) for cl in n_classes]
+        magnitude = [np.linalg.norm(coefficients[cl], ord = p) for cl in n_classes]
+        
+    return {
+            'nonzero_coefficients': nonzero_coefficients,
+            'magnitude': magnitude
+            }
 
 #stessa cosa ma per lr
 def feature_importance_lr(model, X_ts, multiclass = False):
@@ -392,7 +425,7 @@ def feature_importance_lr(model, X_ts, multiclass = False):
     return feature_contributions
 
 
-#calcola la similarità nele feature importances specifiche per rtc e lr    
+#calcola la similarità nele feature importances specifiche per rtc e lr, date le stesse previsioni    
 #model type possibili sono ['rtc', 'lr']    
 def feature_importance_similarity(models, X_ts, model_type = 'rtc',
                                       preds_concordance = True, 
@@ -433,8 +466,8 @@ if __name__=='__main__':
     X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_tr.csv', delimiter=',', skip_header=1)
     X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_ts.csv', delimiter=',', skip_header=1)
     y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_1.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_3.joblib')
+    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_2.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_2.joblib')
     
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
@@ -446,7 +479,7 @@ if __name__=='__main__':
     X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_X_ts.csv', delimiter=',', skip_header=1)
     y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_y_ts.csv', delimiter=',', skip_header=1)
     m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_1.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_3.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_1.joblib')
    
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
@@ -517,7 +550,7 @@ if __name__=='__main__':
     print(rules.keys())
     print(rules['feature_idx'])
     print(rules['feature_name'], rules['threshold'])
-    print(rules['left_node']['left_node']['left_node'].keys())
+    print(rules['left_node']['left_node']['right_node']['node_id'])
     rules = m2.get_rules(columns_names=df.columns)
     
     tree_depth(rules)
@@ -528,7 +561,7 @@ if __name__=='__main__':
     m2.get_leaf_nodes()
 
     help(RuleTreeClassifier())
-    print(inspect.getsource(RuleTreeClassifier._get_tree_paths))
+    print(inspect.getsource(RuleTreeClassifier._predict))
     
     for el in m2.local_interpretation(X_ts):
         print(el.shape)
@@ -562,13 +595,52 @@ if __name__=='__main__':
     fi = feature_importance_lr(m2, X_ts, multiclass = True) 
     print(fi.shape)      
         
+    compl = lr_complexity(m1, multiclass = True)
+    print(compl)   
 
+    idx = m2.apply(X_ts)
+    print(range(idx.shape[0]))
+    lengths = path_lengths(m2, X_ts)
+    print(lengths)
 
 
 #se entrambi i modelli sbagliano, quanto sono le confidence per la classe corretta e la differenza?
-#complexity knn e lr               
+               
+
+def prediction_concordance_filter(models, X_ts, to_filter, concordant = True):
+    
+    preds, _ = predictions(models, X_ts)
+    preds1, preds2 = preds
+    condition = (preds1 == preds2) if concordant  else (preds1 != preds2) 
+    
+    if not isinstance(to_filter, (list, tuple)):
+        return to_filter[condition]
+    else:
+        return [f[condition] for f in to_filter]
+    
 
 
+def function(models, X_ts, to_filter, y_true = None):
+    
+    preds, probs = predictions(models, X_ts)
 
- 
+    preds1, preds2 = preds
+    condition = (preds1 != y_true) & (preds2 != y_true)
+    
+    if not isinstance(to_filter, (list, tuple)):
+        return to_filter[condition]
+    else:
+        return [f[condition] for f in to_filter]
+    
+X = function(models, X_ts, to_filter = X_ts, y_true = y_true)
+print(X)
+    
+preds, probs = predictions(models, X_ts)
 
+preds1, preds2 = preds    
+
+print(preds1) 
+print(preds2)
+print(X_ts[(preds1 != y_true) & (preds2 != y_true)])   
+    
+    
