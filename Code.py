@@ -14,7 +14,7 @@ from HybridReaders import read_wdbc, read_compass, read_german_credit, read_vehi
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier as knn
 from sklearn.linear_model import LogisticRegression as lr
-from sklearn.metrics import accuracy_score, classification_report, f1_score, jaccard_score, recall_score, precision_score, mean_squared_error, mean_absolute_error
+from sklearn.metrics import accuracy_score, classification_report, f1_score, jaccard_score, recall_score, precision_score, mean_squared_error, mean_absolute_error, confusion_matrix, multilabel_confusion_matrix
 from sklearn.preprocessing import StandardScaler
 from scipy.stats import kendalltau, spearmanr, pearsonr
 import random as rd
@@ -22,8 +22,8 @@ from joblib import dump, load
 from shap import TreeExplainer, LinearExplainer, KernelExplainer
 #import os
 import inspect
-from fairlearn.metrics import demographic_parity_difference, demographic_parity_ratio, equal_opportunity_difference, equal_opportunity_ratio, equalized_odds_difference, equalized_odds_ratio
 from fairlearn.metrics import selection_rate, MetricFrame, true_positive_rate, false_positive_rate
+#from fairlearn.metrics import demographic_parity_difference, demographic_parity_ratio, equal_opportunity_difference, equal_opportunity_ratio, equalized_odds_difference, equalized_odds_ratio
 #from fairlearn import metrics
 #from aif360.metrics import ClassificationMetric
 #from aif360.datasets import BinaryLabelDataset
@@ -33,11 +33,14 @@ def split_ts(df_name, df, save = True, scale = True, test_size = 0.3, save_path 
     
     y = df['y'].values
     X = df[df.columns[:-1]].values
-    if scale:
-        scaler = StandardScaler()
-        X = scaler.fit_transform(X)
     
     X_tr, X_ts, y_tr, y_ts = train_test_split(X, y, test_size = test_size, random_state = 42, stratify = y)
+    
+    if scale:
+        scaler = StandardScaler()
+        X_tr = scaler.fit_transform(X_tr)
+        X_ts = scaler.transform(X_ts)
+    
     to_save = {f'{df_name}_X_tr': X_tr, f'{df_name}_X_ts': X_ts, f'{df_name}_y_tr': y_tr, f'{df_name}_y_ts': y_ts}
     
     if save:
@@ -172,9 +175,19 @@ def predictions_similarity(models, X_ts, average = None, multiclass = False):
 def apply_metric(x, y, metric): 
     result = metric(x, y) 
     if isinstance(result, tuple): 
-        return result[0] 
+        val = result[0] 
     else: 
-        return result
+        val = result
+    #per gestire la divisione per 0 in caso di correlazione   
+    if np.isnan(val):
+        std_x = np.std(x)
+        std_y = np.std(y)
+        
+        if std_x == 0 and std_y == 0:
+            return 1.0
+        else:
+            return 0.0
+    return val
 
 #filtro per predizioni concordanti e discordanti
 def prediction_concordance_filter(models, X_ts, to_filter, concordant = True):
@@ -188,7 +201,8 @@ def prediction_concordance_filter(models, X_ts, to_filter, concordant = True):
     else:
         return [f[condition] for f in to_filter]
 
-#calcola la similarità tra confidence in termini di correlazione ed errore    
+#calcola la similarità tra confidence in termini di correlazione ed errore 
+#se concordano/discordano, quanto sono simili in sicurezza?   
 def confidence_similarity(models, X_ts, y_true, metric = spearmanr, preds_concordance = True):
 
     _, probs = predictions(models, X_ts) 
@@ -239,6 +253,9 @@ def kmeans_centroids(data, min_centroids, max_centroids, n_init = 10):
 #rende gli shap values per le features di un modello
 def get_shaps(model, X_ts, min_centroids = 2, max_centroids = 50, expl = KernelExplainer, sampled_results = False):
     
+    #perché il kernel non è deterministico (stima Monte Carlo)
+    np.random.seed(0)
+    
     n_classes = model.predict_proba(X_ts[:1]).shape[1]
     if expl == KernelExplainer:
         
@@ -280,8 +297,7 @@ def importance_array_similarity(arr1, arr2, metric):
     return np.array(tot_measures)
 
 
-
-#considera la somiglianza dell'influenza delle features instance per instance
+#considera la somiglianza dell'influenza delle features instance per instance in caso di previsioni concord/discord
 #definibile sia con misure di correlazione che di errore
 def shaps_similarity(models, X_ts,
                      explainer = KernelExplainer, 
@@ -298,45 +314,66 @@ def shaps_similarity(models, X_ts,
        
     return importance_array_similarity(imp1, imp2, metric = metric)
 
+#FAIRNESS
+
+def negative_predictive_value(y_true, y_pred):     
+    tn, _, fn, _ = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel() 
+    if (tn + fn) == 0:
+        return 0.0
+    return tn / (tn + fn)
 
 
-def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics = selection_rate):
+#crea una serie pandas con metriche e rispettivi valori
+def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics: dict):
    
     y_pred = model.predict(X_ts)
-    explorer = MetricFrame(
-                           metrics = metrics, 
-                           y_true = y_true, 
-                           y_pred = y_pred,
-                           sensitive_features = sensitive_features
-                           )
-    return explorer.by_group
+    classes = np.unique(y_true)
+    
+    if len(classes) > 2:
+        fairness_per_class = []
+        for cl in classes:
+            y_true_binary = (y_true == cl).astype(int)
+            y_pred_binary = (y_pred == cl).astype(int)
+            explorer = MetricFrame(
+                                   metrics = metrics, 
+                                   y_true = y_true_binary, 
+                                   y_pred = y_pred_binary,
+                                   sensitive_features = sensitive_features
+                                   )
+            fairness_per_class.append(explorer.difference())
+        return fairness_per_class
+    
+    else:
+        return explorer.difference()
 
-#mi calcola la predictive equality (FPR)
-def predictive_equality_diff(model, X_ts, y_true, sensitive_features):
+#fairness_explorer()
+#mi calcola eo e cuae come fa fairlearn, anche se possono essere visti già da fairness explorer
+def advanced_fairness(model, X_ts, y_true, sensitive_features):
+    differences = fairness_explorer(model,
+                                    X_ts,
+                                    y_true,
+                                    sensitive_features,
+                                    metrics = {
+                                        'equal opportunity(TPR)': true_positive_rate,
+                                        'predictive equality(FPR)': false_positive_rate,
+                                        'predictive parity(precision)': precision_score,
+                                        'negative predictive parity(NPV)': negative_predictive_value
+                                        })
     
-    true_rates = fairness_explorer(model, X_ts, y_true, sensitive_features, metrics = false_positive_rate)
-    return true_rates.difference()
+    eq_odds = max(differences['equal opportunity(TPR)'], differences['predictive equality(FPR)'])
+    cuae = max(differences['predictive parity(precision)'], differences['negative predictive parity(NPV)'])
     
-#mi calcola la demographic parity diff, equalized odds diff e 
-def model_fairness(model, X_ts, y_true, sensitive_features, metric = demographic_parity_difference):
-    
-    y_pred, _ = predictions(model, X_ts)
-    fairness = metric(
-                    y_true = y_true,
-                    y_pred = y_pred, 
-                    sensitive_features = sensitive_features
-                    )
-    return fairness
+    return {'equalized_odds': eq_odds, 'cond_use_accuracy_equality': cuae}
 
 
-def model_fairness_collection(model, X_ts, y_true, sensitive_features, metrics: dict, return_names = False):
-    
-    fairness_metrics = {}
-    for metric_name, metric in metrics.items():
-        fairness = model_fairness(model, X_ts, y_true, sensitive_features, metric)
-        fairness_metrics[metric_name] = fairness
-        
-    return fairness_metrics if return_names else np.array(list(fairness_metrics.values()))
+fairness_metrics = {
+    'demographic parity(selection_rate)': selection_rate,
+    'equal opportunity(TPR)': true_positive_rate,
+    'predictive equality(FPR)': false_positive_rate,
+    'predictive parity(precision)': precision_score,
+    'negative predictive parity(NPV)': negative_predictive_value}
+
+
 
 #FAMILY SPECIFIC
 
@@ -449,7 +486,7 @@ def feature_importance_similarity(models, X_ts, model_type = 'rtc',
 
 if __name__=='__main__':
     #print(help(ClassificationMetric))
-    df_name, df = read_german_credit(basepath = "C:/Users/franc/OneDrive/Desktop/Magistrale/Tesi modelli equivalenti/")
+    df_name, df = read_german_credit(basepath = "C:/Users/franc/OneDrive/Magistrale/Tesi modelli equivalenti/")
     
     #X_tr, X_ts, y_tr, y_ts = split_ts(df_name, df, save_path = 'C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati')
     #model_types = ['knn', 'rtc', 'lr']
@@ -463,26 +500,28 @@ if __name__=='__main__':
                      #save_path = 'C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german'
                      #)
     #binary
-    X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_tr.csv', delimiter=',', skip_header=1)
-    X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_ts.csv', delimiter=',', skip_header=1)
-    y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_2.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_rtc_2.joblib')
+    X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_tr.csv', delimiter=',', skip_header=1)
+    X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_X_ts.csv', delimiter=',', skip_header=1)
+    y_true = np.genfromtxt('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/german_credit_y_ts.csv', delimiter=',', skip_header=1)
+    m1 = load('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_lr_3.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Models/german/german_credit_lr_3.joblib')
     
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
+    sensitive_features = X_ts_df['personal_status']
     
     #multiclass
-    df_name, df = read_vehicle(basepath = "C:/Users/franc/OneDrive/Desktop/Magistrale/Tesi modelli equivalenti/")
+    df_name, df = read_vehicle(basepath = "C:/Users/franc/OneDrive/Magistrale/Tesi modelli equivalenti/")
     
-    X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_X_tr.csv', delimiter=',', skip_header=1)
-    X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_X_ts.csv', delimiter=',', skip_header=1)
-    y_true = np.genfromtxt('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_y_ts.csv', delimiter=',', skip_header=1)
-    m1 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_1.joblib')
-    m2 = load('C:/Users/franc/OneDrive/Desktop/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_1.joblib')
+    X_tr = np.genfromtxt('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_X_tr.csv', delimiter=',', skip_header=1)
+    X_ts = np.genfromtxt('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_X_ts.csv', delimiter=',', skip_header=1)
+    y_true = np.genfromtxt('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/vehicle_y_ts.csv', delimiter=',', skip_header=1)
+    m1 = load('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_1.joblib')
+    m2 = load('C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Models/vehicle/vehicle_rtc_1.joblib')
    
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
+    sensitive_features = X_ts_df['CIRCULARITY']
     
     #corretta
     preds, probs = predictions(models, X_ts)
@@ -513,6 +552,10 @@ if __name__=='__main__':
 
     print(confidence_similarity(models, X_ts, y_true))
     assert confidence_similarity(models, X_ts, y_true) == 1
+    
+    imp1 = get_shaps(m1, X_ts)
+    imp2 = get_shaps(m2, X_ts)
+    importance_array_similarity(imp1, imp2, metric= spearmanr)
     
     x = shaps_similarity(models, X_ts, sampled_results=True)
     print(x)
@@ -604,43 +647,73 @@ if __name__=='__main__':
     print(lengths)
 
 
-#se entrambi i modelli sbagliano, quanto sono le confidence per la classe corretta e la differenza?
-               
 
-def prediction_concordance_filter(models, X_ts, to_filter, concordant = True):
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#se entrambi sbagliano, quanto sono simili negli errori in caso multiclasse?
+
+               
+#filtra per concordanza/discordanza tra previsioni di sue modelli
+#e concordanza/discordanza delle previsioni di entrambi i modelli con la ground truth
+def prediction_concordance_filter(models, X_ts, to_filter, y_true = None, concordant = True):
     
     preds, _ = predictions(models, X_ts)
     preds1, preds2 = preds
-    condition = (preds1 == preds2) if concordant  else (preds1 != preds2) 
+    
+    if y_true is None:
+        
+        condition = (preds1 == preds2) if concordant  else (preds1 != preds2) 
+    else:
+        condition = (preds1 == y_true) & (preds2 == y_true) if concordant else (preds1 != y_true) & (preds2 != y_true)
     
     if not isinstance(to_filter, (list, tuple)):
         return to_filter[condition]
     else:
         return [f[condition] for f in to_filter]
+
+  
+#se entrambi hanno torto/ragione, quanto sono convinti della ground truth?
+def true_class_probability(models, X_ts, y_true):
+
+    _, probs = predictions(models, X_ts)
+    probs1, probs2 = probs
+    probs1, probs2, y_true = prediction_concordance_filter(models, X_ts, to_filter = (probs1, probs2, y_true), y_true = y_true)
+    filtered_probs = probs1, probs2
     
+    indexes = y_true.ravel().astype(int)
+    probs_true_class = [prob[np.arange(prob.shape[0]), indexes] for prob in filtered_probs]
+    
+    return np.column_stack((probs_true_class[0], probs_true_class[1]))
 
 
-def function(models, X_ts, to_filter, y_true = None):
-    
-    preds, probs = predictions(models, X_ts)
+out = true_class_probability(models, X_ts, y_true)
+print(out)
+print(out.shape)
 
-    preds1, preds2 = preds
-    condition = (preds1 != y_true) & (preds2 != y_true)
-    
-    if not isinstance(to_filter, (list, tuple)):
-        return to_filter[condition]
-    else:
-        return [f[condition] for f in to_filter]
-    
-X = function(models, X_ts, to_filter = X_ts, y_true = y_true)
-print(X)
-    
-preds, probs = predictions(models, X_ts)
 
-preds1, preds2 = preds    
 
-print(preds1) 
-print(preds2)
-print(X_ts[(preds1 != y_true) & (preds2 != y_true)])   
-    
-    
+
+
+
+
+
+
+
+
+
