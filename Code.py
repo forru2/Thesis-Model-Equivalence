@@ -23,6 +23,7 @@ from shap import TreeExplainer, LinearExplainer, KernelExplainer
 #import os
 import inspect
 from fairlearn.metrics import selection_rate, MetricFrame, true_positive_rate, false_positive_rate
+from kneed import KneeLocator 
 #from fairlearn.metrics import demographic_parity_difference, demographic_parity_ratio, equal_opportunity_difference, equal_opportunity_ratio, equalized_odds_difference, equalized_odds_ratio
 #from fairlearn import metrics
 #from aif360.metrics import ClassificationMetric
@@ -228,11 +229,11 @@ def confidence_similarity(models, X_ts, y_true, metric = spearmanr, preds_concor
 
 
 #sceglie il numero di centroidi adatto basandosi sulla silhouette
-def choose_centroids(data, min_centroids, max_centroids):
+def choose_centroids_silhouette(data, min_centroids, max_centroids, n_init = 10):
     best_n = min_centroids
     best_score = -1
     for n in range(min_centroids, max_centroids+1):
-        kmeans = KMeans(n_clusters = n, n_init = 10, random_state = 0).fit(data)
+        kmeans = KMeans(n_clusters = n, n_init = n_init, random_state = 0).fit(data)
         score = silhouette_score(data, kmeans.labels_)
     
         if score > best_score:
@@ -240,11 +241,27 @@ def choose_centroids(data, min_centroids, max_centroids):
             best_n = n
     return best_n
 
-      
+#usa la tecnica del gomito per trovare i centroidi in kmeans
+def choose_knee_centroids(data, min_centroids, max_centroids, n_init = 10)  :
+    sse_vals = []
+    centroids_range = range(min_centroids, max_centroids + 1)
+    for n in centroids_range:
+        kmeans = KMeans(n_clusters = n, n_init = n_init, random_state = 0).fit(data)
+        sse_vals.append(kmeans.inertia_)
+        
+    knee_locator = KneeLocator(list(centroids_range), sse_vals, curve='convex', direction='decreasing')
+    
+    knee = knee_locator.elbow
+    
+    if knee is None:
+        return min_centroids
+        
+    return knee
+
 #filtra i centroidi
 def kmeans_centroids(data, min_centroids, max_centroids, n_init = 10):
     
-    n_clusters = choose_centroids(data, min_centroids, max_centroids)
+    n_clusters = choose_knee_centroids(data, min_centroids, max_centroids, n_init = n_init)
     kmeans = KMeans(n_clusters = n_clusters, n_init = n_init, random_state = 0).fit(data)
     
     return kmeans.cluster_centers_
@@ -344,11 +361,18 @@ def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics: dict):
         return fairness_per_class
     
     else:
+        explorer = MetricFrame(
+                               metrics = metrics, 
+                               y_true = y_true, 
+                               y_pred = y_pred,
+                               sensitive_features = sensitive_features
+                               )
         return explorer.difference()
 
-#fairness_explorer()
+
 #mi calcola eo e cuae come fa fairlearn, anche se possono essere visti già da fairness explorer
 def advanced_fairness(model, X_ts, y_true, sensitive_features):
+    
     differences = fairness_explorer(model,
                                     X_ts,
                                     y_true,
@@ -360,10 +384,23 @@ def advanced_fairness(model, X_ts, y_true, sensitive_features):
                                         'negative predictive parity(NPV)': negative_predictive_value
                                         })
     
-    eq_odds = max(differences['equal opportunity(TPR)'], differences['predictive equality(FPR)'])
-    cuae = max(differences['predictive parity(precision)'], differences['negative predictive parity(NPV)'])
+    if isinstance(differences, list):
+        eq_odds_list = []
+        cuae_list = []
+        for el in differences:
+            
+            eq_odds = max(el['equal opportunity(TPR)'], el['predictive equality(FPR)'])
+            cuae = max(el['predictive parity(precision)'], el['negative predictive parity(NPV)'])
+            eq_odds_list.append(eq_odds)
+            cuae_list.append(cuae)
     
-    return {'equalized_odds': eq_odds, 'cond_use_accuracy_equality': cuae}
+        fairness_dict = {'equalized_odds': eq_odds_list, 'cond_use_accuracy_equality': cuae_list}
+    else:
+        eq_odds = max(differences['equal opportunity(TPR)'], differences['predictive equality(FPR)'])
+        cuae = max(differences['predictive parity(precision)'], differences['negative predictive parity(NPV)'])
+        
+        fairness_dict = {'equalized_odds': eq_odds, 'cond_use_accuracy_equality': cuae}
+    return fairness_dict
 
 
 fairness_metrics = {
@@ -522,6 +559,24 @@ if __name__=='__main__':
     models = [m1, m2]
     X_ts_df = pd.DataFrame(X_ts, columns=df.columns[:-1])
     sensitive_features = X_ts_df['CIRCULARITY']
+    sensitive_features = pd.qcut(X_ts_df['CIRCULARITY'], q=4, labels=['Q1', 'Q2', 'Q3', 'Q4'])
+    
+    
+    ex = fairness_explorer(m1, X_ts, y_true, sensitive_features, fairness_metrics)
+    print(ex)
+    for el in ex:
+        print(el)
+        
+    af = advanced_fairness(m1, X_ts, y_true, sensitive_features)
+    print(af)
+    fairness_metrics = {
+        'demographic parity(selection_rate)': selection_rate,
+        'equal opportunity(TPR)': true_positive_rate,
+        'predictive equality(FPR)': false_positive_rate,
+        'predictive parity(precision)': precision_score,
+        'negative predictive parity(NPV)': negative_predictive_value}
+
+    
     
     #corretta
     preds, probs = predictions(models, X_ts)
@@ -646,7 +701,7 @@ if __name__=='__main__':
     lengths = path_lengths(m2, X_ts)
     print(lengths)
 
-
+    choose_knee_centroids(X_ts, min_centroids=2, max_centroids=50)
 
 
 
