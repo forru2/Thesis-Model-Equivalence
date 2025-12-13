@@ -11,16 +11,19 @@ from fairlearn.metrics import selection_rate, MetricFrame, true_positive_rate, f
 
 
 
-def negative_predictive_value(y_true, y_pred):     
+def negative_predictive_value(y_true, y_pred, **kwargs):     
     tn, _, fn, _ = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel() 
     if (tn + fn) == 0:
         return 0.0
     return tn / (tn + fn)
 
 
-#crea una serie pandas con metriche e rispettivi valori
-def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics: dict):
-   
+#calcola le metriche di fairness
+def fairness_explorer(model, X_ts, y_true, sensitive_features, metric, take_max = True, **kwargs):
+    
+    if isinstance(metric, dict):
+        raise ValueError('the function computes on metric at a time')
+    
     y_pred = model.predict(X_ts)
     classes = np.unique(y_true)
     
@@ -30,17 +33,21 @@ def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics: dict):
             y_true_binary = (y_true == cl).astype(int)
             y_pred_binary = (y_pred == cl).astype(int)
             explorer = MetricFrame(
-                                   metrics = metrics, 
+                                   metrics = metric, 
                                    y_true = y_true_binary, 
                                    y_pred = y_pred_binary,
                                    sensitive_features = sensitive_features
                                    )
             fairness_per_class.append(explorer.difference())
-        return fairness_per_class
+        
+        if take_max:
+            return max(abs(np.array(fairness_per_class)))
+        else:
+            return fairness_per_class
     
     else:
         explorer = MetricFrame(
-                               metrics = metrics, 
+                               metrics = metric, 
                                y_true = y_true, 
                                y_pred = y_pred,
                                sensitive_features = sensitive_features
@@ -48,43 +55,26 @@ def fairness_explorer(model, X_ts, y_true, sensitive_features, metrics: dict):
         return explorer.difference()
 
 
-#mi calcola eo e cuae come fa fairlearn, anche se possono essere visti già da fairness explorer
-def advanced_fairness(model, X_ts, y_true, sensitive_features):
-    
-    differences = fairness_explorer(model,
-                                    X_ts,
-                                    y_true,
-                                    sensitive_features,
-                                    metrics = {
-                                        'equal opportunity(TPR)': true_positive_rate,
-                                        'predictive equality(FPR)': false_positive_rate,
-                                        'predictive parity(precision)': precision_score,
-                                        'negative predictive parity(NPV)': negative_predictive_value
-                                        })
-    
-    if isinstance(differences, list):
-        eq_odds_list = []
-        cuae_list = []
-        for el in differences:
-            
-            eq_odds = max(el['equal opportunity(TPR)'], el['predictive equality(FPR)'])
-            cuae = max(el['predictive parity(precision)'], el['negative predictive parity(NPV)'])
-            eq_odds_list.append(eq_odds)
-            cuae_list.append(cuae)
-    
-        fairness_dict = {'equalized_odds': eq_odds_list, 'cond_use_accuracy_equality': cuae_list}
-    else:
-        eq_odds = max(differences['equal opportunity(TPR)'], differences['predictive equality(FPR)'])
-        cuae = max(differences['predictive parity(precision)'], differences['negative predictive parity(NPV)'])
+#mi calcola eo e cuae come fa fairlearn
+def advanced_fairness(model, X_ts, y_true, sensitive_features, metric:str = 'eo', **kwargs):
+    if metric == 'eo':
+        meas1 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = true_positive_rate)
+        meas2 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = false_positive_rate)
         
-        fairness_dict = {'equalized_odds': eq_odds, 'cond_use_accuracy_equality': cuae}
-    return fairness_dict
+    elif metric == 'cuae':
+        meas1 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = lambda y_true, y_pred: precision_score(y_true, y_pred, zero_division=0))
+        meas2 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = negative_predictive_value)
+        
+    else:
+        raise ValueError(f"'{metric}' not supported. Choose between 'eo' and 'cuae'.")
+        
+    if isinstance(meas1, list):
+        final_measure = [max(meas1[i], meas2[i]) for i in range(len(meas1))]
+    
+    else:
+        final_measure = max(meas1, meas2)
+        
+    return final_measure
 
 
-fairness_metrics = {
-    'demographic parity(selection_rate)': selection_rate,
-    'equal opportunity(TPR)': true_positive_rate,
-    'predictive equality(FPR)': false_positive_rate,
-    'predictive parity(precision)': precision_score,
-    'negative predictive parity(NPV)': negative_predictive_value}
 
