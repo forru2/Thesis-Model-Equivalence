@@ -8,58 +8,37 @@ Created on Wed Dec 10 10:06:57 2025
 
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import fairness as fn
-import performance as pf
-import robustness as rb
-from joblib import load
+from Utils import concatenate_df
 
 
 #mi rende un'array con id dei modelli che rispettano la condizione
 def get_rashomon(metrics_df, condition:str):
     filtered = metrics_df.query(condition)
-    return np.array(filtered['model_id'])
+    return np.array(filtered['model_id']), filtered
 
-
-
-def plot_rashomon(metrics_df, x_var, y_var, z_var, rashomon_models):
-    fig = plt.figure(figsize=(10, 8), layout = 'constrained')
-    ax = fig.add_subplot(111, projection='3d')
-
-    ax.scatter(
-        metrics_df[x_var],
-        metrics_df[y_var],
-        metrics_df[z_var],
-        c=metrics_df['model_id'].isin(rashomon_models).map({True: 'blue', False: 'gray'}),
-        s=50)
+#è la frazione di modelli totali nel rashomon
+def rashomon_ratio(metrics_df, condition:str):
+    tot_models = metrics_df['model_id'].values
+    rash_models, rash_df = get_rashomon(metrics_df, condition)
     
-    ax.set_xlabel(x_var)
-    ax.set_ylabel(y_var)
-    ax.set_zlabel(z_var)
-    ax.set_title("Rashomon Set")
-    ax.view_init(elev=20, azim=-10) 
-    plt.show()
-    
-
+    rr = rash_models.shape[0]/tot_models.shape[0]
+    return rr
 
 
 if __name__ == '__main__':
-    df = pd.read_csv(r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\rtc_mean_results.csv')
-    print(df.columns)
-    min(df['val_acc_robustness'].values)
-    
+    full_df = concatenate_df(path = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\lr',
+                      file_names = '*_holdout')
+
+    cols_to_keep = [col for col in full_df.columns if col.startswith('val_') or col in ['n_neighbors']]
+    df = full_df[cols_to_keep]
+        
     condition = 'val_accuracy >= 0.7 and val_dem_parity <= 0.2'
-    rashomon = get_rashomon(df, condition)
-    rashomon
+    rashomon_ratio(full_df, condition)
+
     
     
-    x_var = 'val_accuracy'
-    y_var = 'val_dem_parity'
-    z_var = 'val_acc_robustness'
-    plot_rashomon(df, x_var, y_var, z_var, rashomon)
     
-    m1 = load(r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\german_rtc_1.joblib')
-    m1 = load(r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\german_rtc_5.joblib')
+
     
     
     

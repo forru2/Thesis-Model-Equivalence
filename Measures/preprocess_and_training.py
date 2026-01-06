@@ -7,21 +7,25 @@ Created on Tue Dec  2 10:44:00 2025
 
 import pandas as pd
 import numpy as np
-from RuleTree import RuleTreeClassifier
-from sklearn.neighbors import KNeighborsClassifier 
-from sklearn.linear_model import LogisticRegression 
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.metrics import make_scorer, f1_score, accuracy_score
 from sklearn.preprocessing import StandardScaler
-import random as rd
-from joblib import dump
-import sys
+#import random as rd
+#from joblib import dump
+#import sys
 import os
-from sklearn.model_selection import StratifiedKFold
+#from sklearn.model_selection import StratifiedKFold
 import itertools
 import fairness as fn
 import performance as pf
 import robustness as rb
+import json
+import hashlib
+#import os
+import joblib
+from Utils import convert_standard_python
+
+
 
 
 
@@ -77,156 +81,156 @@ def get_parameter_combos(param_grid:dict):
     return parameter_combos
 
 
-def cross_val_metrics(model, model_name:str, X_tr, y_tr, X_ts, y_ts, parameter_combos, metrics_to_compute, 
-                      file_path:str, 
-                      fairness_sens_feat_tr, 
-                      fairness_sens_feat_ts,
-                      n_folds=5):
-    
-    #mi creo i path se non esistono
-    directory = os.path.dirname(file_path)
-    if directory and not os.path.exists(directory):
-        os.makedirs(directory, exist_ok=True)
-    
-    #if os.path.exists(file_path):
-       # os.remove(file_path)
-    
-    #creo la lista di indici per le fold seguendo stratkfold
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=0)
-    folds_indices = list(skf.split(X_tr, y_tr))
-    
-    model_params_keys = model().get_params().keys()
 
-    #per ogni combo di parametri (modello)
-    for i, combo in enumerate(parameter_combos):
-        
-        print(f'CV model {i+1}/{len(parameter_combos)}')
-        
-        sum_results_val = {metric['name']: 0 for metric in metrics_to_compute}
-        sum_results_test = {metric['name']: 0 for metric in metrics_to_compute}
-        
-        #per ogni fold divido prendendo la lista di indici già creata
-        for fold, (train_index, val_index) in enumerate(folds_indices):
-            
-            X_train, X_val = X_tr[train_index], X_tr[val_index]
-            y_train, y_val = y_tr[train_index], y_tr[val_index]
-            
-            #per calcolare la fairness mi serve una feature sensibile (colonna df) e devo regolarla al sample
-            sens_feat_val = fairness_sens_feat_tr[val_index]
-            
-            #inizializzazione e fit del modello (il knn non aveva random state)
-            if 'random_state' in model_params_keys:
-                m = model(**combo, random_state=i)
-            else:
-                m = model(**combo)
-            m.fit(X_train, y_train)
-            
-            #calcolo metriche per val e ts
-            for metric in metrics_to_compute:
-                params_val = {'model': m, 'X_ts': X_val, 'X_tr': X_train, 'y_tr': y_train, 'y_true': y_val, 'sensitive_features': sens_feat_val}
-                params_val.update(metric.get('params', {}))
-                
-                params_test = {'model': m, 'X_ts': X_ts, 'X_tr': X_tr, 'y_tr': y_tr, 'y_true': y_ts, 'sensitive_features': fairness_sens_feat_ts}
-                params_test.update(metric.get('params', {}))
-                
-                val_res = metric['func'](**params_val)
-                test_res = metric['func'](**params_test)
-                
-                                        
-                sum_results_val[metric['name']] += val_res
-                sum_results_test[metric['name']] += test_res
-
-        
-        to_save = {'model_id': f'{model_name}_{i+1}'}
-        
-        for k in sum_results_val.keys():
-            to_save[f'val_{k}'] = sum_results_val[k] / n_folds
-            to_save[f'test_{k}'] = sum_results_test[k] / n_folds
-            
-        df_row = pd.DataFrame([to_save])
-        #header = not os.path.exists(file_path) and i == 0
-        header = (i == 0)
-        df_row.to_csv(file_path, mode = 'a', header = header, index = False)
-        
-
-    print(f'Metrics saved in: \n{file_path}')
-   
+def get_file_name(d:dict):    
+    d = convert_standard_python(d)
+    initial_string = json.dumps(d, sort_keys = True).encode('utf-8')
+    encoded_name = hashlib.md5(initial_string).hexdigest()
+    return encoded_name
 
 
-def full_train_metrics(model, model_name:str, df_name:str, X_tr, y_tr, X_ts, y_ts, parameter_combos, metrics_to_compute, metrics_path:str, model_dir:str, fairness_sens_feat, tree_root = None):
-    
-    #mi creo i path se non esistono e gestisco i csv già creati
-    directory = os.path.dirname(metrics_path)
-    if directory and not os.path.exists(directory):
-        os.makedirs(directory, exist_ok=True)
+def get_metrics(model, X_tr, y_tr, X_ts, y_ts, metrics_to_compute, 
+                                   sens_feat_tr, sens_feat_ts, param_combo, prefix=''):    
+    results = {}     
+    for metric in metrics_to_compute:
+        params = {
+            'model': model, 'X_ts': X_ts, 'X_tr': X_tr, 'y_tr': y_tr, 'y_true': y_ts, 
+            'sensitive_features': sens_feat_ts, 'sensitive_feature_tr': sens_feat_tr,
+            'param_combo': param_combo
+        }
+        params.update(metric.get('params', {}))
+        results[f"{prefix}{metric['name']}"] = metric['func'](**params)
         
-    if not os.path.exists(model_dir):
+    return results
+    
+
+
+
+def holdout_results(model, X_tr, X_ts, y_tr, y_ts, fairness_sens_feat_tr, fairness_sens_feat_ts,
+                     val_size, parameter_combo: dict, 
+                     metrics_to_compute, random_state = None, noise_function = None):
+    
+    X_train, X_val, y_train, y_val, sens_feat_train, sens_feat_val = train_test_split(
+        X_tr, y_tr, fairness_sens_feat_tr, test_size = val_size, random_state = 0, stratify = y_tr
+    )
+    
+    m_params = model().get_params()
+    m = model(**parameter_combo, random_state = random_state) if 'random_state' in m_params else model(**parameter_combo) 
+    m.fit(X_train, y_train)
+    
+    if noise_function:
+        m = noise_function(m, random_state)
+        
+    res_val = get_metrics(model = m, X_tr = X_train, y_tr = y_train, X_ts = X_val, y_ts = y_val, 
+                          metrics_to_compute = metrics_to_compute, 
+                          sens_feat_tr = sens_feat_train, sens_feat_ts = sens_feat_val, 
+                          param_combo = parameter_combo, prefix="val_")
+    
+    res_test = get_metrics(model = m, X_tr = X_train, y_tr = y_train, X_ts = X_ts, y_ts = y_ts,
+                           metrics_to_compute = metrics_to_compute, 
+                           sens_feat_tr = sens_feat_train, sens_feat_ts = fairness_sens_feat_ts, 
+                           param_combo = parameter_combo, prefix="test_")
+    
+    return res_val, res_test    
+
+def full_model_results(model, X_tr, y_tr, X_ts, y_ts, parameter_combo:dict, metrics_to_compute, 
+                 fairness_sens_feat_ts, fairness_sens_feat_tr, random_state = None, noise_function = None):
+    
+    
+    m_params = model().get_params()
+    m = model(**parameter_combo, random_state = random_state) if 'random_state' in m_params else model(**parameter_combo)
+    m.fit(X_tr, y_tr)
+    
+    if noise_function:
+        m = noise_function(m, random_state)
+        
+    res = get_metrics(model = m, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
+                      metrics_to_compute = metrics_to_compute,
+                      sens_feat_tr = fairness_sens_feat_tr, sens_feat_ts = fairness_sens_feat_ts, param_combo = parameter_combo)
+    
+    return m, res
+
+def results_manager(model, X_tr, y_tr, X_ts, y_ts, results_function, parameter_combo:dict, metrics_to_compute, 
+                    fairness_sens_feat_tr, fairness_sens_feat_ts,
+                    output_dir='.', val_size=0.2, random_state = None, model_dir = '.',
+                    param_combo_processed = None, add_rs = False, noise_function = None):
+    
+    model_params = param_combo_processed if param_combo_processed is not None else parameter_combo
+    d = {
+        'model_type': model.__name__,
+        'params': parameter_combo,
+        'rs': random_state
+        }
+    file_name = get_file_name(d)
+    suffix = '_holdout.csv' if results_function is holdout_results else '.csv'
+    file_path = os.path.join(output_dir, f'{file_name}{suffix}')
+    if os.path.exists(file_path): 
+        return pd.read_csv(file_path)
+    
+    
+    if results_function is holdout_results:
+        
+        res_val, res_test = results_function(
+                                model = model, X_tr = X_tr, X_ts = X_ts, y_tr = y_tr, y_ts = y_ts,
+                                fairness_sens_feat_tr = fairness_sens_feat_tr, fairness_sens_feat_ts = fairness_sens_feat_ts, 
+                                val_size = val_size, random_state = random_state, parameter_combo = model_params, 
+                                metrics_to_compute = metrics_to_compute, noise_function = noise_function
+                                ) 
+        res_dict = {**res_val, **res_test}
+    
+    else:
+        m, res = results_function(
+                        model = model, X_tr = X_tr, X_ts = X_ts, y_tr = y_tr, y_ts = y_ts, 
+                        parameter_combo = model_params,
+                        metrics_to_compute = metrics_to_compute, fairness_sens_feat_tr = fairness_sens_feat_tr, 
+                        fairness_sens_feat_ts = fairness_sens_feat_ts, random_state = random_state, noise_function = noise_function
+                        )
+        res_dict = res
+        
         os.makedirs(model_dir, exist_ok=True)
-
-    #if os.path.exists(metrics_path):
-        #os.remove(metrics_path)
+        joblib.dump(m, os.path.join(model_dir, f'{file_name}.joblib'))
         
-    model_params_keys = model().get_params().keys()
-
-    #per ogni combo di parametri (modello)
-    for i, combo in enumerate(parameter_combos):
+    results = {'model_id': file_name, 'model_type': model.__name__, **parameter_combo, **res_dict}
+    if add_rs:
+        results['random_state_seed'] = random_state
         
-        print(f'Training model {i+1}/{len(parameter_combos)}')
-        
-        #inizializzazione e fit del modello (il knn non aveva random state)
-        if 'random_state' in model_params_keys:
-            m = model(**combo, random_state=i)
-        else:
-            m = model(**combo)
-        m.fit(X_tr, y_tr)
-        
-        #salvo il modello
-        model_path = os.path.join(model_dir, f'{df_name}_{model_name}_{i+1}.joblib')
-        dump(m, model_path)
-        
-        #calcolo le metriche e salvo in csv
-        to_save = {'model_id': f'{model_name}_{i+1}'}
-        params = {'model': m, 'X_ts': X_ts, 'y_true': y_ts,
-            'sensitive_features': fairness_sens_feat, 'node': tree_root}
+    os.makedirs(output_dir, exist_ok = True) 
+    df = pd.DataFrame([results])
+    df.to_csv(file_path, index = False)
+    return df
+    
 
 
-        for metric in metrics_to_compute:
-            params = {'model': m, 'X_ts': X_ts, 'X_tr': X_tr, 'y_tr': y_tr, 'y_true': y_ts, 'sensitive_features': fairness_sens_feat}
-            params.update(metric.get('params', {}))
-            
-            result = metric['func'](**params)
-            to_save[metric['name']] = result
 
-        df_row = pd.DataFrame([to_save])
-        df_row.to_csv(metrics_path, mode='a', header= (i == 0), index=False)
+#mi fa la grid search di un modello e mi rende i parametri ottimali con le metriche di assessment
+def grid(X_tr, y_tr, param_grid:dict, model, cv_folds = 5, n_jobs = -1):
+    
+    m = model(random_state = 0) if 'random_state' in model().get_params() else model()
+    
+    f1_0 = make_scorer(f1_score, pos_label = 0, zero_division = 0)
+    f1_1 = make_scorer(f1_score, pos_label = 1, zero_division = 0)
+    
+    gs = GridSearchCV(estimator = m, param_grid = param_grid, cv = cv_folds, n_jobs = n_jobs,
+                      scoring = {'accuracy': 'accuracy', 'f1': 'f1_macro', 'f1_0': f1_0, 'f1_1': f1_1},
+                      refit = 'f1',
+                      return_train_score = True)
+    gs.fit(X_tr, y_tr)
+    idx = gs.best_index_
+    results = {
+        'best_params': gs.best_params_,
+        'train_accuracy': gs.cv_results_['mean_train_accuracy'][idx],
+        'val_accuracy': gs.cv_results_['mean_test_accuracy'][idx],
+        'train_f1': gs.cv_results_['mean_train_f1'][idx],
+        'val_f1': gs.cv_results_['mean_test_f1'][idx],
+        'val_f1_class_0': gs.cv_results_['mean_test_f1_0'][idx],
+        'val_f1_class_1': gs.cv_results_['mean_test_f1_1'][idx]       
+    }
+    return results
 
-    print(f"Metrics saved in: {metrics_path}")
-    print(f'Models saved in: \n{model_dir}')
 
 
 if __name__ == '__main__':
 
-    rtc_param_grid = {
-        'criterion': ['gini', 'entropy'],               
-        'max_depth': [3, 5, 7, 9, 11, 13, 15, 17, 19, 21], 
-        'min_samples_split': [2, 5, 10, 20, 30, 40, 50, 75, 100, 150], 
-        'min_samples_leaf': [1, 2, 5, 10, 20]            
-         }
-    
-    knn_param_grid = {
-        'weights': ['uniform', 'distance'],               
-        'n_neighbors': [1, 2, 3, 4, 5, 6, 7, 8, 10, 12], 
-        'p': [round(n, 4) for n in np.linspace(1, 5, 50)], 
-         }
-    
-    lr_param_grid = {
-        'solver': ['saga'],                
-        'penalty': ['l1', 'elasticnet'],   
-        'C': [1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.2, 0.3, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100, 200],
-        'l1_ratio': [0.0, 0.25, 0.5, 0.75, 1.0],
-        'max_iter': [100, 200, 400, 800, 1600],
-        }
-    
     metrics_to_compute = [
     {'name': 'accuracy', 'func': pf.performance, 'params': {'measure': pf.accuracy_score, 'average': 'weighted'}},
     {'name': 'f1', 'func': pf.performance, 'params': {'measure': pf.f1_score, 'average': 'weighted'}},
@@ -239,30 +243,36 @@ if __name__ == '__main__':
     {'name': 'predictive_equality', 'func': fn.fairness_explorer, 'params': {'metric': fn.false_positive_rate}},
     {'name': 'predictive_parity', 'func': fn.fairness_explorer, 'params': {'metric': fn.precision_score}},
     {'name': 'neg_predictive_parity', 'func': fn.fairness_explorer, 'params': {'metric': fn.negative_predictive_value}},
-    {'name': 'acc_robustness', 'func': rb.robustness, 'params': {'measure': rb.performance, 'measure_metric': rb.accuracy_score}}
+    {'name': 'acc_robustness', 'func': rb.robustness, 'params': {'measure': rb.performance, 'measure_metric': rb.accuracy_score}},
+    {'name': 'f1_robustness', 'func': rb.robustness, 'params': {'measure': rb.performance, 'measure_metric': rb.f1_score}},
+    {'name': 'precision_robustness', 'func': rb.robustness, 'params': {'measure': rb.performance, 'measure_metric': rb.precision_score}},
+    {'name': 'recall_robustness', 'func': rb.robustness, 'params': {'measure': rb.performance, 'measure_metric': rb.recall_score}},
+    {'name': 'dem_parity_robustness', 'func': rb.robustness, 'params': {'measure': fn.fairness_explorer, 'measure_metric': fn.selection_rate}},
+    {'name': 'equal_opp_robustness', 'func': rb.robustness, 'params': {'measure': fn.fairness_explorer, 'measure_metric': fn.true_positive_rate}},
+    {'name': 'predictive_eq_robustness', 'func': rb.robustness, 'params': {'measure': fn.fairness_explorer, 'measure_metric': fn.false_positive_rate}},
+    {'name': 'pred_parity_robustness', 'func': rb.robustness, 'params': {'measure': fn.fairness_explorer, 'measure_metric': fn.precision_score}},
+    {'name': 'neg_pred_parity_robustness', 'func': rb.robustness, 'params': {'measure': fn.fairness_explorer, 'measure_metric': fn.negative_predictive_value}},
+    {'name': 'eq_odds_robustness', 'func': rb.robustness, 'params': {'measure': fn.advanced_fairness, 'measure_metric': 'eo'}},
+    {'name': 'eq_odds_robustness', 'func': rb.robustness, 'params': {'measure': fn.advanced_fairness, 'measure_metric': 'cuae'}}
     ]
-    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati'
-    X_tr = np.genfromtxt(f'{path}/german_credit_X_tr.csv', delimiter=',', skip_header=1)
-    X_ts = np.genfromtxt(f'{path}/german_credit_X_ts.csv', delimiter=',', skip_header=1)
-    y_ts = np.genfromtxt(f'{path}/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    y_tr = np.genfromtxt(f'{path}/german_credit_y_tr.csv', delimiter=',', skip_header=1)
-    X_ts_df = pd.read_csv(f'{path}/german_credit_X_ts.csv')
-    X_tr_df = pd.read_csv(f'{path}/german_credit_X_tr.csv')
-
-    parameter_combos = get_parameter_combos(rtc_param_grid)
-    cross_val_metrics(RuleTreeClassifier, 'rtc', X_tr, y_tr, X_ts, y_ts, parameter_combos, 
-                      metrics_to_compute, 
-                      file_path = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\rtc_mean_results.csv', 
-                      fairness_sens_feat_tr = X_tr_df['personal_status'], 
-                      fairness_sens_feat_ts = X_ts_df['personal_status']
-                      )
     
-    full_train_metrics(RuleTreeClassifier,
-                       'rtc', 'german', X_tr, y_tr, X_ts, y_ts, parameter_combos, metrics_to_compute, 
-                       metrics_path = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\final_results.csv', 
-                       model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german', 
-                       fairness_sens_feat =  X_ts_df['personal_status'])
+    
+    
+
+    
 
 
 
 
+    
+
+
+
+
+    
+    
+    
+    
+    
+    
+    

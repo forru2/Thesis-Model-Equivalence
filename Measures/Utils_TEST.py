@@ -71,7 +71,11 @@ def test_pcf():
     assert isinstance(dummy_pcf(preds1, preds2, to_filter = arr, y_true = y_true), np.ndarray)
 
 
-
+def test_cdf():
+    df = ut.concatenate_df(path = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results',
+                        file_names = '*_cv')
+    assert df.isnull().values.any() == False, 'there are null values in the df'
+    assert df.shape[0] == 3000
 
 
 if __name__ == '__main__':
@@ -108,7 +112,7 @@ if __name__ == '__main__':
     test_predictions(models = models, X_ts = X_ts_bin)
     test_adm()
     test_pcf()
-    
+    test_cdf()
     
     
     

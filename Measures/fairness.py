@@ -11,6 +11,7 @@ from fairlearn.metrics import selection_rate, MetricFrame, true_positive_rate, f
 
 
 
+
 def negative_predictive_value(y_true, y_pred, **kwargs):     
     tn, _, fn, _ = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel() 
     if (tn + fn) == 0:
@@ -26,7 +27,7 @@ def fairness_explorer(model, X_ts, y_true, sensitive_features, metric, take_max 
     
     y_pred = model.predict(X_ts)
     classes = np.unique(y_true)
-    
+        
     if len(classes) > 2:
         fairness_per_class = []
         for cl in classes:
@@ -62,7 +63,7 @@ def advanced_fairness(model, X_ts, y_true, sensitive_features, metric:str = 'eo'
         meas2 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = false_positive_rate)
         
     elif metric == 'cuae':
-        meas1 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = lambda y_true, y_pred: precision_score(y_true, y_pred, zero_division=0))
+        meas1 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = precision_score)
         meas2 = fairness_explorer(model, X_ts, y_true, sensitive_features, metric = negative_predictive_value)
         
     else:

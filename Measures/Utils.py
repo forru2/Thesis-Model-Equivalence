@@ -8,7 +8,9 @@ Created on Sun Nov  9 13:11:57 2025
 import numpy as np
 from sklearn.metrics import accuracy_score, classification_report, f1_score, jaccard_score, recall_score, precision_score, mean_squared_error, mean_absolute_error, confusion_matrix, multilabel_confusion_matrix
 from scipy.stats import kendalltau, spearmanr, pearsonr
-
+import glob
+import os
+import pandas as pd
 
 #prende un modello o una lista di modelli e ne calcola le predizioni e le probabilità per ogni classe
 def predictions(models, X_ts, limit_to_two = True, **kwargs):
@@ -64,14 +66,29 @@ def prediction_concordance_filter(models, X_ts, to_filter, y_true = None, concor
         return [f[condition] for f in to_filter]
 
     
+#fa la concatenazione di df in csv nella stessa cartella anche se sono nelle rispettive sottocartelle
+def concatenate_df(path, file_names, axis = 0):
+    files_in_path = glob.glob(os.path.join(path, f'**/{file_names}.csv'), recursive = True)
+    
+    to_concat = []
+    for file in files_in_path:
+        df = pd.read_csv(file)
+        to_concat.append(df)
+    return pd.concat(to_concat, axis = axis, ignore_index = True)
 
 
-
-
-
-
-
-
+def convert_standard_python(obj):
+    if isinstance(obj, np.integer):
+        return int(obj)
+    if isinstance(obj, np.floating):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: convert_standard_python(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [convert_standard_python(el) for el in obj]
+    return obj
 
 
 
