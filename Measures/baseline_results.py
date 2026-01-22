@@ -19,10 +19,13 @@ import fairness as fn
 import performance as pf
 import robustness as rb
 import model_complexity as mc
-import xgboost as xgb
-from sklearn.metrics import classification_report, accuracy_score
-from joblib import load
-
+from xgboost import XGBClassifier
+from sklearn.ensemble import RandomForestClassifier
+from lightgbm import LGBMClassifier
+#from sklearn.metrics import classification_report, accuracy_score
+#from joblib import load
+from catboost import CatBoostClassifier
+import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
     path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati'
@@ -135,48 +138,127 @@ if __name__ == '__main__':
     
     
     
-    xgb_param_grid = {
-        'n_estimators': [20, 25],
-        'learning_rate': np.linspace(0.3, 0.5, 3),
-        'max_depth': [1, 2],
-        'gamma': np.linspace(0.6, 0.9, 3),
-        'subsample': np.linspace(0.5, 0.8, 2),
-        'min_child_weight': [2, 3],
-        'reg_alpha': np.linspace(0.1, 0.8, 3), #l1
-        'reg_lambda': np.linspace(1, 2, 3) #l2
+    rf_param_grid = {
+        'n_estimators': [300],
+        'max_depth': [None],
+        'min_samples_split': [2],
+        'min_samples_leaf': [4],
+        'ccp_alpha': [0.01],
+        'n_jobs': [-1],
+        'class_weight': ['balanced_subsample']
         }
     
-    xgb_results = grid(X_tr, y_tr, xgb_param_grid, model = xgb.XGBClassifier)
+    lgb_param_grid = {
+        'n_estimators': [300],
+        'learning_rate': [0.01, 0.1],   
+        'num_leaves': [10, 15],          
+        'max_depth': [5, 10],            
+        'min_child_samples': [50, 100],   
+        'reg_alpha': [0, 0.1, 1],           
+        'reg_lambda': [0, 0.1, 1],          
+        'is_unbalance': [True],          
+        'importance_type': ['gain'],
+        'n_jobs': [-1]
+    }
     
-    print(xgb_results)
-    print('overfitting: ', round(xgb_results['train_f1'] - xgb_results['val_f1'], 4))
     
-    xgb_pars = xgb_results['best_params']
+    results = grid(X_tr, y_tr, lgb_param_grid, model = LGBMClassifier)
     
-    xgboost = results_manager(model = xgb.XGBClassifier, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
+    print(results)
+    print('overfitting: ', results['train_f1'] - results['val_f1'])
+    
+    pars = results['best_params']
+    
+    baseline = results_manager(model = LGBMClassifier, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
                               results_function = holdout_results, 
-                              parameter_combo = xgb_pars, 
+                              parameter_combo = pars, 
                               metrics_to_compute = metrics_to_compute, 
                               fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
                               fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-                              output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\baseline\xgboost',
-                              model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\baseline\xgboost',
+                              output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\baseline',
+                              model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\baseline',
                               )
     
     
     
+    cb_param_grid = {
+        'depth': [3, 4, 5],
+        'learning_rate': [0.01, 0.02],
+        'l2_leaf_reg': [10, 20, 30],
+        'random_strength': [5, 7, 10],
+        'border_count': [150, 254],
+    }
+    
+    model = CatBoostClassifier(
+        iterations = 5000,
+        early_stopping_rounds = 10,
+        auto_class_weights = 'Balanced'
+        )
+    
+    res = model.grid_search(cb_param_grid, X_tr, y_tr, cv = 5)
+    print('iterations: ', res['cv_results']['iterations'][-1])
+    print(res['cv_results']['test-Logloss-mean'][-1])
+    print('overfitting: ', abs(res['cv_results']['train-Logloss-mean'][-1] - res['cv_results']['test-Logloss-mean'][-1]))
+    print(res['params'])
+        
+    plt.figure(figsize = (8, 6))
+    plt.plot(res['cv_results']['train-Logloss-mean'], label = f'Train_LogLoss {res['cv_results']['train-Logloss-mean'][-1]}', color = 'blue')
+    plt.plot(res['cv_results']['test-Logloss-mean'], label = f'Test_LogLoss {res['cv_results']['test-Logloss-mean'][-1]}', color = 'green')
+    plt.legend()
+    plt.show()
+    
+    results = grid(X_tr, y_tr, 
+                      param_grid = {
+                          'depth': [5],
+                          'learning_rate': [0.02],
+                          'l2_leaf_reg': [30],
+                          'random_strength': [10],
+                          'border_count': [150]
+                       }, 
+                      model = CatBoostClassifier(iterations = 360, auto_class_weights = 'Balanced')
+                )
+    
+    print(results)
+    print('overfitting: ', results['train_f1'] - results['val_f1'])
+    
+    pars = results['best_params']
+    pars['iterations'] = 360
+    pars['auto_class_weights'] = 'Balanced'
+    baseline = results_manager(model = CatBoostClassifier, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
+                              results_function = full_model_results, 
+                              parameter_combo = pars, 
+                              metrics_to_compute = metrics_to_compute, 
+                              fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
+                              fairness_sens_feat_ts = X_ts_df['personal_status'].values,
+                              output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\baseline',
+                              model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\baseline',
+                              )
     
     
+    xgb_param_grid = {
+        'max_depth': [3, 4],
+        'n_estimators': [260, 263, 266],
+        'scale_pos_weight': [5, 9, 13],
+        'learning_rate': [0.01, 0.02, 0.03],
+        'reg_lambda': [30],
+        'gamma': [0.5, 1.0],
+        'subsample': [0.7, 0.08],
+        'colsample_bytree': [0.7, 0.08]
+    }
     
+    results = grid(X_tr, y_tr, xgb_param_grid, model = XGBClassifier(random_state = 42))
     
+    print(results)
+    print('overfitting: ', results['train_f1'] - results['val_f1'])
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    pars = results['best_params']
+    baseline = results_manager(model = XGBClassifier, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
+                              results_function = holdout_results, 
+                              parameter_combo = pars, 
+                              metrics_to_compute = metrics_to_compute, 
+                              fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
+                              fairness_sens_feat_ts = X_ts_df['personal_status'].values,
+                              output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\baseline',
+                              model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\baseline',
+                              )
     

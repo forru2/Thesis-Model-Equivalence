@@ -16,9 +16,9 @@ import pacmap
 import pandas as pd
 
 #fa il plot delle matrici di correlazione
-def plot_corr_matrix(corr_matrix, figsize:tuple = (12, 10), annot = True, title = None, save_plot = False, file_dir = '.', cbar = False):
+def plot_corr_matrix(corr_matrix, figsize:tuple = (12, 10), annot = True, title = None, save_plot = False, file_dir = '.'):
     plt.figure(figsize = figsize)
-    sns.heatmap(corr_matrix, annot = annot, cbar = cbar, fmt = '.2f', cmap = 'coolwarm')
+    sns.heatmap(corr_matrix, annot = annot, fmt = '.2f', cmap = 'coolwarm')
     if title:
         plt.title(title)
     if save_plot:
@@ -55,7 +55,7 @@ def plot_corr_matrix_grid(corr_matrices:list, titles:list, cols=2, figsize_unit=
     
     
 #plot di prima visualizzazione del rashomon set
-def plot_rashomon(df, x, y, z, rash_models = [], title = 'Rashomon Set'):
+def plot_rashomon(df, x, y, z, rash_models, title = 'Rashomon Set'):
     fig = plt.figure(figsize=(10, 8), layout = 'constrained')
     ax = fig.add_subplot(111, projection='3d')
 

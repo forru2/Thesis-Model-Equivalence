@@ -20,10 +20,17 @@ def get_rashomon(metrics_df, condition:str):
 def rashomon_ratio(metrics_df, condition:str):
     tot_models = metrics_df['model_id'].values
     rash_models, rash_df = get_rashomon(metrics_df, condition)
-    
+
     rr = rash_models.shape[0]/tot_models.shape[0]
     return rr
 
+def rr_variation(df, threshold, tol, metric):
+    ratios = []
+    for t in tol:
+        cond = f'{metric} >= {threshold - (threshold*t)}'
+        ratio = rashomon_ratio(df, cond)        
+        ratios.append(ratio)
+    return ratios
 
 if __name__ == '__main__':
     full_df = concatenate_df(path = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\lr',

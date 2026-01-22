@@ -205,16 +205,15 @@ def results_manager(model, X_tr, y_tr, X_ts, y_ts, results_function, parameter_c
 #mi fa la grid search di un modello e mi rende i parametri ottimali con le metriche di assessment
 def grid(X_tr, y_tr, param_grid:dict, model, cv_folds = 5, n_jobs = -1):
     
-    m = model(random_state = 0) if 'random_state' in model().get_params() else model()
     
     f1_0 = make_scorer(f1_score, pos_label = 0, zero_division = 0)
     f1_1 = make_scorer(f1_score, pos_label = 1, zero_division = 0)
     
-    gs = GridSearchCV(estimator = m, param_grid = param_grid, cv = cv_folds, n_jobs = n_jobs,
+    gs = GridSearchCV(estimator = model, param_grid = param_grid, cv = cv_folds, n_jobs = n_jobs,
                       scoring = {'accuracy': 'accuracy', 'f1': 'f1_macro', 'f1_0': f1_0, 'f1_1': f1_1},
                       refit = 'f1',
                       return_train_score = True)
-    gs.fit(X_tr, y_tr)
+    gs.fit(X_tr, y_tr, verbose = False)
     idx = gs.best_index_
     results = {
         'best_params': gs.best_params_,
