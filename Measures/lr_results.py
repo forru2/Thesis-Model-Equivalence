@@ -1,24 +1,51 @@
 # -*- coding: utf-8 -*-
 """
-Created on Fri Jan  2 23:01:32 2026
+Created on Mon Jan 26 22:30:50 2026
 
 @author: franc
 """
 
-
 import pandas as pd
 import numpy as np
-from sklearn.linear_model import LogisticRegression 
+#from sklearn.linear_model import LogisticRegression 
 import fairness as fn
 import performance as pf
 import robustness as rb
 from joblib import Parallel, delayed
-from preprocess_and_training import results_manager, get_parameter_combos, holdout_results, full_model_results
+from preprocess_and_training import results_manager, get_parameter_combos, model_results
 import model_complexity as mc
+import random
+from my_lr import lr
 
-
-
-
+def features_combos_lr(X_tr, penalty:list, C:list, solver = 'saga', max_iter = 100000,
+                       n_total_combos = 1000, prt = False):
+    
+    random.seed(0)
+    
+    n_features = X_tr.shape[1]
+    features_indices = list(range(n_features))
+    n_base_combos = len(penalty)*len(C)
+    n_features_combos = n_total_combos // n_base_combos
+    
+    features_combos = []
+    seen_subsets = set()
+    
+    n_iter = 0
+    while len(features_combos) < n_features_combos and n_iter < n_features_combos * 100:
+        feat_subset_size = random.randint(2, n_features)
+        feat_subset = random.sample(features_indices, feat_subset_size)
+        
+        feat_subset_tuple = tuple(sorted(feat_subset))
+        if feat_subset_tuple not in seen_subsets:
+            seen_subsets.add(feat_subset_tuple)
+            features_combos.append(list(feat_subset_tuple))
+        n_iter +=1 
+    
+    if prt:
+        print(f'n_features_combos: {len(features_combos)}')
+        print(f'tot_combos: {len(features_combos)* n_base_combos}')
+            
+    return features_combos
 
 
 def add_noise_lr(model, seed, std):
@@ -29,59 +56,67 @@ def add_noise_lr(model, seed, std):
         
     return model
 
-def single_lr_results(X_tr, y_tr, X_ts, y_ts, results_function, parameter_combo:dict, metrics_to_compute, 
-                    fairness_sens_feat_tr, fairness_sens_feat_ts, std = 0.0,
-                    output_dir='.', val_size=0.2, random_state = None, model_dir = '.'):
+def single_lr_results(X_train, y_train, X_ts, X_val, y_ts, y_val, parameter_combo:dict, metrics_to_compute, 
+                    sens_feat_train, sens_feat_ts, sens_feat_val, std = 0.0,
+                    output_dir='.', random_state = None, model_dir = '.'):
     
     apply_noise = lambda m, rand_state: add_noise_lr(m, rand_state, std)
     
     lr_param_combo = {**parameter_combo, 'noise_std': std}
     
-    return results_manager(model = LogisticRegression, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-                           results_function = results_function, parameter_combo = lr_param_combo, 
+    return results_manager(model = lr, X_train = X_train, y_train = y_train, X_ts = X_ts, X_val = X_val, y_ts = y_ts, 
+                           y_val = y_val,
+                           parameter_combo = lr_param_combo, 
                            param_combo_processed = parameter_combo,
                            metrics_to_compute = metrics_to_compute, 
-                           fairness_sens_feat_tr = fairness_sens_feat_tr, fairness_sens_feat_ts = fairness_sens_feat_ts,
-                           output_dir = output_dir, val_size = val_size, random_state = random_state, model_dir = model_dir,
+                           sens_feat_train = sens_feat_train, sens_feat_ts = sens_feat_ts, sens_feat_val = sens_feat_val,
+                           output_dir = output_dir, random_state = random_state, model_dir = model_dir,
                            add_rs = True, noise_function = apply_noise
                            )
 
 
-def results_lr(combo, X_tr, y_tr, X_ts, y_ts, results_function, metrics_to_compute, fairness_sens_feat_tr,
-               fairness_sens_feat_ts, output_dir, model_dir = '.', n_noisy_versions = 3, std = 0.1, seed = 0):
+def results_lr(combo, X_train, y_train, X_ts, X_val, y_ts, y_val, metrics_to_compute, sens_feat_train,
+               sens_feat_ts, sens_feat_val, output_dir, model_dir = '.', n_noisy_versions = 3, std = 0.1, seed = 0):
     
 
-    single_lr_results(X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, results_function = results_function, 
+    single_lr_results(X_train = X_train, y_train = y_train, X_ts = X_ts, X_val = X_val, y_ts = y_ts, y_val = y_val, 
                       parameter_combo = combo, metrics_to_compute = metrics_to_compute,
-                      fairness_sens_feat_tr = fairness_sens_feat_tr,
-                      fairness_sens_feat_ts = fairness_sens_feat_ts,
+                      sens_feat_train = sens_feat_train,
+                      sens_feat_ts = sens_feat_ts, sens_feat_val = sens_feat_val,
                       std = 0.0, output_dir = output_dir, random_state = seed, model_dir = model_dir)
         
     for n in range(n_noisy_versions):
         seed += 1 
-        single_lr_results(X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, results_function = results_function, 
+        single_lr_results(X_train = X_train, y_train = y_train, X_ts = X_ts, X_val = X_val, y_ts = y_ts, y_val = y_val, 
                           parameter_combo = combo, metrics_to_compute = metrics_to_compute,
-                          fairness_sens_feat_tr = fairness_sens_feat_tr,
-                          fairness_sens_feat_ts = fairness_sens_feat_ts,
+                          sens_feat_train = sens_feat_train,
+                          sens_feat_ts = sens_feat_ts, sens_feat_val = sens_feat_val,
                           std = std, output_dir = output_dir, random_state = seed, model_dir = model_dir)
  
             
     
 if __name__ == '__main__':
-    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati'
-    X_tr = np.genfromtxt(f'{path}/german_credit_X_tr.csv', delimiter=',', skip_header=1)
-    X_ts = np.genfromtxt(f'{path}/german_credit_X_ts.csv', delimiter=',', skip_header=1)
-    y_ts = np.genfromtxt(f'{path}/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    y_tr = np.genfromtxt(f'{path}/german_credit_y_tr.csv', delimiter=',', skip_header=1)
-    X_ts_df = pd.read_csv(f'{path}/german_credit_X_ts.csv')
-    X_tr_df = pd.read_csv(f'{path}/german_credit_X_tr.csv')
+    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/compass'
+    X_train = np.genfromtxt(f'{path}/compass_X_train.csv', delimiter=',', skip_header=1)
+    X_ts = np.genfromtxt(f'{path}/compass_X_ts.csv', delimiter=',', skip_header=1)
+    X_val = np.genfromtxt(f'{path}/compass_X_val.csv', delimiter=',', skip_header=1)
     
-    lr_param_grid = { 
-        'solver': ['saga'], #per accertarmi che sia usato per elasticnet             
-        'penalty': ['l1', 'l2', 'elasticnet'],   
+    y_ts = np.genfromtxt(f'{path}/compass_y_ts.csv', delimiter=',', skip_header=1)
+    y_val = np.genfromtxt(f'{path}/compass_y_val.csv', delimiter=',', skip_header=1)
+    y_train = np.genfromtxt(f'{path}/compass_y_train.csv', delimiter=',', skip_header=1)
+    
+    X_ts_df = pd.read_csv(f'{path}/compass_X_ts.csv')
+    X_val_df = pd.read_csv(f'{path}/compass_X_val.csv')
+    X_train_df = pd.read_csv(f'{path}/compass_X_train.csv') 
+    
+    lr_param_grid = {       
+        'solver': ['saga'],
+        'penalty': ['l1', 'l2'],   
         'C': [1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.2, 0.3, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100, 200],
         'max_iter': [100000],
-        'l1_ratio': [0.2, 0.5, 0.8] #per accertarmi che sia definito per elasticnet
+        'features_lr': features_combos_lr(X_train, penalty = ['l1', 'l2'],
+                                       C = [1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 0.1, 0.2, 0.3, 0.5, 1, 2, 3, 5, 10, 20, 30, 50, 100, 200], 
+                                       n_total_combos = 520)
         }
     
     
@@ -114,39 +149,15 @@ if __name__ == '__main__':
     parameter_combos_lr = get_parameter_combos(lr_param_grid)
 
     Parallel(n_jobs=-1)(delayed(results_lr)(
-         X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-         results_function = holdout_results, 
+         X_train = X_train, y_train = y_train, X_ts = X_ts, X_val = X_val, y_ts = y_ts, y_val = y_val, 
          combo = combo, metrics_to_compute = metrics_to_compute, 
-         fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
-         fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\lr', 
-         n_noisy_versions = 5, std = 0.1 , seed = i
+         sens_feat_train = X_train_df['race'].values, 
+         sens_feat_ts = X_ts_df['race'].values,
+         sens_feat_val = X_val_df['race'].values,
+         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\compass\model_results\lr', 
+         model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\compass\lr',
+         n_noisy_versions = 1, std = 0.5 , seed = i
         ) for i, combo in enumerate(parameter_combos_lr))
     
-    Parallel(n_jobs=-1)(delayed(results_lr)(
-         X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-         results_function = full_model_results, 
-         combo = combo, metrics_to_compute = metrics_to_compute, 
-         fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
-         fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\lr', 
-         model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\lr',
-         n_noisy_versions = 5, std = 0.1, seed = i
-        ) for i, combo in enumerate(parameter_combos_lr))
     
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 

@@ -13,7 +13,7 @@ import fairness as fn
 import performance as pf
 import robustness as rb
 from joblib import Parallel, delayed
-from preprocess_and_training import results_manager, get_parameter_combos, holdout_results, full_model_results, grid
+from preprocess_and_training import results_manager, get_parameter_combos, model_results, grid
 import model_complexity as mc
 
 
@@ -28,18 +28,19 @@ def manage_rtc_base_stumps(parameter_combo:dict, rng: np.random.RandomState):
 
 
 
-def results_rtc(X_tr, y_tr, X_ts, y_ts, results_function, parameter_combo:dict, metrics_to_compute, 
-                    fairness_sens_feat_tr, fairness_sens_feat_ts,
-                    output_dir='.', val_size=0.2, random_state = None, model_dir = '.'):
+def results_rtc(X_train, X_val, y_train, X_ts, y_ts, y_val, parameter_combo:dict, metrics_to_compute, 
+                    sens_feat_train, sens_feat_ts, sens_feat_val,
+                    output_dir='.', random_state = None, model_dir = '.'):
     
     rng = np.random.RandomState(random_state)
     param_combo_processed = manage_rtc_base_stumps(parameter_combo = parameter_combo, rng = rng)
         
-    return results_manager(model = RuleTreeClassifier, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-                           results_function = results_function, parameter_combo = parameter_combo, 
+    return results_manager(model = RuleTreeClassifier, X_train = X_train, X_val = X_val, 
+                           y_train = y_train, X_ts = X_ts, y_ts = y_ts, y_val = y_val,
+                           parameter_combo = parameter_combo, 
                            metrics_to_compute = metrics_to_compute, 
-                           fairness_sens_feat_tr = fairness_sens_feat_tr, fairness_sens_feat_ts = fairness_sens_feat_ts,
-                           output_dir = output_dir, val_size = val_size, random_state = random_state, model_dir = model_dir,
+                           sens_feat_train = sens_feat_train, sens_feat_ts = sens_feat_ts, sens_feat_val = sens_feat_val,
+                           output_dir = output_dir, random_state = random_state, model_dir = model_dir,
                            param_combo_processed = param_combo_processed, add_rs = True
                            )
     
@@ -47,13 +48,18 @@ def results_rtc(X_tr, y_tr, X_ts, y_ts, results_function, parameter_combo:dict, 
 
 
 if __name__ == '__main__':
-    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati'
-    X_tr = np.genfromtxt(f'{path}/german_credit_X_tr.csv', delimiter=',', skip_header=1)
-    X_ts = np.genfromtxt(f'{path}/german_credit_X_ts.csv', delimiter=',', skip_header=1)
-    y_ts = np.genfromtxt(f'{path}/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    y_tr = np.genfromtxt(f'{path}/german_credit_y_tr.csv', delimiter=',', skip_header=1)
-    X_ts_df = pd.read_csv(f'{path}/german_credit_X_ts.csv')
-    X_tr_df = pd.read_csv(f'{path}/german_credit_X_tr.csv')
+    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/compass'
+    X_train = np.genfromtxt(f'{path}/compass_X_train.csv', delimiter=',', skip_header=1)
+    X_ts = np.genfromtxt(f'{path}/compass_X_ts.csv', delimiter=',', skip_header=1)
+    X_val = np.genfromtxt(f'{path}/compass_X_val.csv', delimiter=',', skip_header=1)
+    
+    y_ts = np.genfromtxt(f'{path}/compass_y_ts.csv', delimiter=',', skip_header=1)
+    y_val = np.genfromtxt(f'{path}/compass_y_val.csv', delimiter=',', skip_header=1)
+    y_train = np.genfromtxt(f'{path}/compass_y_train.csv', delimiter=',', skip_header=1)
+    
+    X_ts_df = pd.read_csv(f'{path}/compass_X_ts.csv')
+    X_val_df = pd.read_csv(f'{path}/compass_X_val.csv')
+    X_train_df = pd.read_csv(f'{path}/compass_X_train.csv') 
     
     rtc_param_grid = {
         'criterion': ['gini', 'entropy'],               
@@ -96,28 +102,17 @@ if __name__ == '__main__':
     parameter_combos_rtc = get_parameter_combos(rtc_param_grid)
     
     Parallel(n_jobs=-1)(delayed(results_rtc)(
-         X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-         results_function = holdout_results, 
+         X_train = X_train, X_val = X_val, y_train = y_train, X_ts = X_ts, y_ts = y_ts, y_val = y_val,
          parameter_combo = combo, metrics_to_compute = metrics_to_compute, 
-         fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
-         fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\rtc', 
-         val_size=0.2,
+         sens_feat_train = X_train_df['race'].values, 
+         sens_feat_ts = X_ts_df['race'].values,
+         sens_feat_val = X_val_df['race'].values,
+         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\compass\model_results\rtc', 
+         model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\compass\rtc',
          random_state = i
         ) for i, combo in enumerate(parameter_combos_rtc))
     
-    Parallel(n_jobs=-1)(delayed(results_rtc)(
-         X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-         results_function = full_model_results, 
-         parameter_combo = combo, metrics_to_compute = metrics_to_compute, 
-         fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
-         fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\rtc', 
-         random_state = i,
-         model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\rtc' 
-        ) for i, combo in enumerate(parameter_combos_rtc))
     
-
 
 
 

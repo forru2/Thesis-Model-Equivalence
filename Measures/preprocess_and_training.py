@@ -30,7 +30,7 @@ from Utils import convert_standard_python
 
 
 #split df and save
-def split_data(df_name, df, target_col = 'y', save = True, scale = True, test_size = 0.3, random_state = 42, save_path = './Split_salvati', **kwargs):
+def split_data(df_name, df, target_col = 'y', save = True, scale = True, test_size = 0.3, val_size = 0.2, random_state = 42, save_path = '.', **kwargs):
     
     feature_names = df.drop(columns=[target_col]).columns.tolist()
     
@@ -38,6 +38,7 @@ def split_data(df_name, df, target_col = 'y', save = True, scale = True, test_si
     y = df[target_col].values
     
     X_tr, X_ts, y_tr, y_ts = train_test_split(X, y, test_size = test_size, random_state = random_state, stratify = y)
+    X_train, X_val, y_train, y_val = train_test_split(X_tr, y_tr, test_size = val_size, random_state = 0, stratify = y_tr)
     
     scaler = None
     if scale:
@@ -47,11 +48,15 @@ def split_data(df_name, df, target_col = 'y', save = True, scale = True, test_si
     
     to_save_X = {
         f'{df_name}_X_tr': X_tr, 
-        f'{df_name}_X_ts': X_ts 
+        f'{df_name}_X_ts': X_ts,
+        f'{df_name}_X_train': X_train,
+        f'{df_name}_X_val': X_val
         }
     to_save_y = {
         f'{df_name}_y_tr': y_tr, 
-        f'{df_name}_y_ts': y_ts
+        f'{df_name}_y_ts': y_ts,
+        f'{df_name}_y_train': y_train,
+        f'{df_name}_y_val': y_val
         }
     
     if save:
@@ -67,7 +72,7 @@ def split_data(df_name, df, target_col = 'y', save = True, scale = True, test_si
         except FileNotFoundError:
             raise FileNotFoundError(f'The directory {save_path} does not exist or it is wrong')
     
-    return X_tr, X_ts, y_tr, y_ts, feature_names, scaler
+    return X_train, X_ts, X_val, y_train, y_ts, y_val, feature_names
 
 
 
@@ -106,13 +111,11 @@ def get_metrics(model, X_tr, y_tr, X_ts, y_ts, metrics_to_compute,
 
 
 
-def holdout_results(model, X_tr, X_ts, y_tr, y_ts, fairness_sens_feat_tr, fairness_sens_feat_ts,
-                     val_size, parameter_combo: dict, 
-                     metrics_to_compute, random_state = None, noise_function = None):
+def model_results(model, X_train, X_ts, X_val, y_train, y_ts, y_val, sens_feat_train, 
+                  sens_feat_ts, sens_feat_val, parameter_combo: dict,
+                  metrics_to_compute,
+                  random_state = None, noise_function = None):
     
-    X_train, X_val, y_train, y_val, sens_feat_train, sens_feat_val = train_test_split(
-        X_tr, y_tr, fairness_sens_feat_tr, test_size = val_size, random_state = 0, stratify = y_tr
-    )
     
     m_params = model().get_params()
     m = model(**parameter_combo, random_state = random_state) if 'random_state' in m_params else model(**parameter_combo) 
@@ -128,31 +131,16 @@ def holdout_results(model, X_tr, X_ts, y_tr, y_ts, fairness_sens_feat_tr, fairne
     
     res_test = get_metrics(model = m, X_tr = X_train, y_tr = y_train, X_ts = X_ts, y_ts = y_ts,
                            metrics_to_compute = metrics_to_compute, 
-                           sens_feat_tr = sens_feat_train, sens_feat_ts = fairness_sens_feat_ts, 
+                           sens_feat_tr = sens_feat_train, sens_feat_ts = sens_feat_ts, 
                            param_combo = parameter_combo, prefix="test_")
     
-    return res_val, res_test    
+    return m, res_val, res_test    
 
-def full_model_results(model, X_tr, y_tr, X_ts, y_ts, parameter_combo:dict, metrics_to_compute, 
-                 fairness_sens_feat_ts, fairness_sens_feat_tr, random_state = None, noise_function = None):
-    
-    
-    m_params = model().get_params()
-    m = model(**parameter_combo, random_state = random_state) if 'random_state' in m_params else model(**parameter_combo)
-    m.fit(X_tr, y_tr)
-    
-    if noise_function:
-        m = noise_function(m, random_state)
-        
-    res = get_metrics(model = m, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-                      metrics_to_compute = metrics_to_compute,
-                      sens_feat_tr = fairness_sens_feat_tr, sens_feat_ts = fairness_sens_feat_ts, param_combo = parameter_combo)
-    
-    return m, res
 
-def results_manager(model, X_tr, y_tr, X_ts, y_ts, results_function, parameter_combo:dict, metrics_to_compute, 
-                    fairness_sens_feat_tr, fairness_sens_feat_ts,
-                    output_dir='.', val_size=0.2, random_state = None, model_dir = '.',
+
+def results_manager(model, X_train, X_ts, X_val, y_train, y_ts, y_val, parameter_combo:dict, metrics_to_compute, 
+                    sens_feat_train, sens_feat_ts, sens_feat_val,
+                    output_dir='.', random_state = None, model_dir = '.',
                     param_combo_processed = None, add_rs = False, noise_function = None):
     
     model_params = param_combo_processed if param_combo_processed is not None else parameter_combo
@@ -162,34 +150,23 @@ def results_manager(model, X_tr, y_tr, X_ts, y_ts, results_function, parameter_c
         'rs': random_state
         }
     file_name = get_file_name(d)
-    suffix = '_holdout.csv' if results_function is holdout_results else '.csv'
-    file_path = os.path.join(output_dir, f'{file_name}{suffix}')
+    file_path = os.path.join(output_dir, f'{file_name}.csv')
     if os.path.exists(file_path): 
         return pd.read_csv(file_path)
     
+       
+    m, res_val, res_test = model_results(
+                            model = model, X_train = X_train, X_ts = X_ts, X_val = X_val, y_train = y_train, y_ts = y_ts, y_val = y_val,
+                            sens_feat_train = sens_feat_train, sens_feat_ts = sens_feat_ts, sens_feat_val = sens_feat_val,
+                            random_state = random_state, parameter_combo = model_params, 
+                            metrics_to_compute = metrics_to_compute, noise_function = noise_function
+                            ) 
     
-    if results_function is holdout_results:
-        
-        res_val, res_test = results_function(
-                                model = model, X_tr = X_tr, X_ts = X_ts, y_tr = y_tr, y_ts = y_ts,
-                                fairness_sens_feat_tr = fairness_sens_feat_tr, fairness_sens_feat_ts = fairness_sens_feat_ts, 
-                                val_size = val_size, random_state = random_state, parameter_combo = model_params, 
-                                metrics_to_compute = metrics_to_compute, noise_function = noise_function
-                                ) 
-        res_dict = {**res_val, **res_test}
+    res_dict = {**res_val, **res_test}
     
-    else:
-        m, res = results_function(
-                        model = model, X_tr = X_tr, X_ts = X_ts, y_tr = y_tr, y_ts = y_ts, 
-                        parameter_combo = model_params,
-                        metrics_to_compute = metrics_to_compute, fairness_sens_feat_tr = fairness_sens_feat_tr, 
-                        fairness_sens_feat_ts = fairness_sens_feat_ts, random_state = random_state, noise_function = noise_function
-                        )
-        res_dict = res
-        
-        os.makedirs(model_dir, exist_ok=True)
-        joblib.dump(m, os.path.join(model_dir, f'{file_name}.joblib'))
-        
+    os.makedirs(model_dir, exist_ok=True)
+    joblib.dump(m, os.path.join(model_dir, f'{file_name}.joblib'))
+
     results = {'model_id': file_name, 'model_type': model.__name__, **parameter_combo, **res_dict}
     if add_rs:
         results['random_state_seed'] = random_state
@@ -212,8 +189,9 @@ def grid(X_tr, y_tr, param_grid:dict, model, cv_folds = 5, n_jobs = -1):
     gs = GridSearchCV(estimator = model, param_grid = param_grid, cv = cv_folds, n_jobs = n_jobs,
                       scoring = {'accuracy': 'accuracy', 'f1': 'f1_macro', 'f1_0': f1_0, 'f1_1': f1_1},
                       refit = 'f1',
-                      return_train_score = True)
-    gs.fit(X_tr, y_tr, verbose = False)
+                      return_train_score = True,
+                      verbose =  0)
+    gs.fit(X_tr, y_tr)
     idx = gs.best_index_
     results = {
         'best_params': gs.best_params_,

@@ -30,8 +30,8 @@ def predictions(models, X_ts, limit_to_two = True, **kwargs):
         
     return preds, probs
 
-#applica una metrica facendo la differenza tra quelle che rendono tuple e quelle
-#che rendono un valore
+#applica una metrica (corr, errore) facendo la differenza tra quelle che rendono tuple e quelle
+#che rendono un valore (per gestire la correlazione che rende anche il p value)
 def apply_distance_metric(x, y, metric, **kwargs): 
     result = metric(x, y) 
     if isinstance(result, tuple): 

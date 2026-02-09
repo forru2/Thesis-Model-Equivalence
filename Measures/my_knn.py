@@ -13,25 +13,25 @@ import pandas as pd
 
 
 class knn(KNeighborsClassifier):
-    def __init__(self, features = None, n_neighbors = 5, weights = 'uniform', 
+    def __init__(self, features_knn = None, n_neighbors = 5, weights = 'uniform', 
                  algorithm = 'auto', leaf_size = 30, p = 2, metric = 'minkowski', 
                  metric_params = None, n_jobs = None, **kwargs):
         
         super().__init__(n_neighbors = n_neighbors, weights = weights, algorithm = algorithm,
                          leaf_size = leaf_size, p = p, metric = metric,
                          metric_params = metric_params, n_jobs = n_jobs, **kwargs)
-        self.features = features
+        self.features_knn = features_knn
         
     def select_features(self, X):
-        if self.features is None:
+        if self.features_knn is None:
             return X
         
         if isinstance(X, pd.DataFrame):
-            if all(isinstance(feat, int) for feat in self.features):
-                return X.iloc[:, self.features].values
-            return X[self.features].values
+            if all(isinstance(feat, int) for feat in self.features_knn):
+                return X.iloc[:, self.features_knn].values
+            return X[self.features_knn].values
             
-        return X[:, self.features]
+        return X[:, self.features_knn]
             
     
     def fit(self, X, y):

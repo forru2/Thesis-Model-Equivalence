@@ -1,2 +1,0 @@
-model_id,model_type,weights,n_neighbors,p,features,accuracy,f1,precision,recall,equalized_odds,cuae,dem_parity,equal_opportunity,predictive_equality,predictive_parity,neg_predictive_parity,acc_robustness,f1_robustness,precision_robustness,recall_robustness,dem_parity_robustness,equal_opp_robustness,predictive_eq_robustness,pred_parity_robustness,neg_pred_parity_robustness,eq_odds_robustness
-b33e976ea5f14ba7115548031318c3bb,knn,distance,6,2,"[16, 21]",0.7,0.0,0.0,0.0,0.0,0.26,0.0,0.0,0.0,0.0,0.26,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.8906477157141813,0.8906477157141813

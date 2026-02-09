@@ -44,7 +44,7 @@ def read_diabetes(encode=True, basepath="../../../"):
 
 def read_taiwan_credit(encode=True, basepath="../../../"):
     target_col = 'dpnm'
-    df = pd.read_csv(basepath+"datasets/CLU/FAIR/taiwan_credit_sensible.csv").sort_values(by='AGE_BINNED')
+    df = pd.read_csv(basepath+"datasets/CLF/taiwan_credit.csv").sort_values(by='AGE_BINNED')
 
     if encode:
         df.AGE_BINNED = LabelEncoder().fit_transform(df.AGE_BINNED)

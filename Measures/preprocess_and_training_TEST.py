@@ -6,7 +6,7 @@ Created on Tue Dec  2 12:28:07 2025
 """
 import pandas as pd
 import numpy as np
-from HybridReaders import read_wdbc, read_compass, read_german_credit, read_vehicle
+from HybridReaders import read_wdbc, read_compass, read_german_credit, read_adult, read_taiwan_credit
 import preprocess_and_training as pt
 from joblib import load
 from RuleTree import RuleTreeClassifier
@@ -79,14 +79,22 @@ def test_grid(X_tr, y_tr):
 
 if __name__ == '__main__':
     basepath = "C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/"
-    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati'
+    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/taiwan_credit'
     
-    df_name, df = read_german_credit(basepath = basepath)
-    X_tr, X_ts, y_tr, y_ts, feature_names, scaler = pt.split_data(df_name, df, save = False)
-    X_ts_df = pd.read_csv(f'{path}/german_credit_X_ts.csv')
-    X_tr_df = pd.read_csv(f'{path}/german_credit_X_tr.csv')
+    #df_name, df = read_german_credit(basepath = basepath) #presonal_status
+    #df_name, df = read_compass(basepath = basepath) #race
+    #df_name, df = read_adult(basepath = basepath) #sex
+    df_name, df = read_taiwan_credit(basepath = basepath) #SEX
     
+    pt.split_data(df_name, df, save = True, save_path = path)
     
+    #X_ts_df = pd.read_csv(f'{path}/german_credit_X_ts.csv')
+    #X_tr_df = pd.read_csv(f'{path}/compass_X_tr.csv')
+    
+    #X_tr_df['race'].unique()
+    df['SEX'].unique()
+    
+    df['y'][df['y'] == 1]
     
     metrics_to_compute = [
     {'name': 'accuracy', 'func': pf.performance, 'params': {'measure': pf.accuracy_score, 'average': 'weighted'}},

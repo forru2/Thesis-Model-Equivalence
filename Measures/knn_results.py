@@ -12,16 +12,16 @@ import numpy as np
 import fairness as fn
 import performance as pf
 import robustness as rb
-from preprocess_and_training import get_parameter_combos, holdout_results, full_model_results, grid
+from preprocess_and_training import get_parameter_combos, model_results, grid
 from joblib import Parallel, delayed
 from my_knn import knn
 
 
 
     
-def features_combos(X_tr, p:list, n_neighbors:list, weights:list, n_total_combos = 1000, prt = False):
+def features_combos(X_tr, p:list, n_neighbors:list, weights:list, n_total_combos = 1000, random_state = 42, prt = False):
     
-    random.seed(0)
+    random.seed(random_state)
     
     n_features = X_tr.shape[1]
     features_indices = list(range(n_features))
@@ -47,36 +47,42 @@ def features_combos(X_tr, p:list, n_neighbors:list, weights:list, n_total_combos
         print(f'tot_combos: {len(features_combos)* n_base_combos}')
             
     return features_combos
-    
-    
-def results_knn(X_tr, y_tr, X_ts, y_ts, results_function, parameter_combo:dict, metrics_to_compute, 
-                    fairness_sens_feat_tr, fairness_sens_feat_ts,
-                    output_dir='.', val_size=0.2, model_dir = '.'):
+
+
+
+def results_knn(X_train, y_train, X_ts, X_val, y_ts, y_val, parameter_combo:dict, metrics_to_compute, 
+                    sens_feat_train, sens_feat_ts, sens_feat_val,
+                    output_dir='.', model_dir = '.'):
     
    
-    return results_manager(model = knn, X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-                           results_function = results_function, parameter_combo = parameter_combo, 
+    return results_manager(model = knn, X_train = X_train, X_ts = X_ts, X_val = X_val, y_train = y_train, y_ts = y_ts, 
+                           y_val = y_val, parameter_combo = parameter_combo, 
                            metrics_to_compute = metrics_to_compute, 
-                           fairness_sens_feat_tr = fairness_sens_feat_tr, fairness_sens_feat_ts = fairness_sens_feat_ts,
-                           output_dir = output_dir, val_size = val_size, model_dir = model_dir
+                           sens_feat_train = sens_feat_train, sens_feat_ts = sens_feat_ts, sens_feat_val = sens_feat_val,
+                           output_dir = output_dir, model_dir = model_dir
                            )
     
 
     
 if __name__ == '__main__':
-    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati'
-    X_tr = np.genfromtxt(f'{path}/german_credit_X_tr.csv', delimiter=',', skip_header=1)
-    X_ts = np.genfromtxt(f'{path}/german_credit_X_ts.csv', delimiter=',', skip_header=1)
-    y_ts = np.genfromtxt(f'{path}/german_credit_y_ts.csv', delimiter=',', skip_header=1)
-    y_tr = np.genfromtxt(f'{path}/german_credit_y_tr.csv', delimiter=',', skip_header=1)
-    X_ts_df = pd.read_csv(f'{path}/german_credit_X_ts.csv')
-    X_tr_df = pd.read_csv(f'{path}/german_credit_X_tr.csv')    
+    path = 'C:/Users/franc/OneDrive/Magistrale/Thesis-Model-Equivalence/Split_salvati/compass'
+    X_train = np.genfromtxt(f'{path}/compass_X_train.csv', delimiter=',', skip_header=1)
+    X_ts = np.genfromtxt(f'{path}/compass_X_ts.csv', delimiter=',', skip_header=1)
+    X_val = np.genfromtxt(f'{path}/compass_X_val.csv', delimiter=',', skip_header=1)
+    
+    y_ts = np.genfromtxt(f'{path}/compass_y_ts.csv', delimiter=',', skip_header=1)
+    y_val = np.genfromtxt(f'{path}/compass_y_val.csv', delimiter=',', skip_header=1)
+    y_train = np.genfromtxt(f'{path}/compass_y_train.csv', delimiter=',', skip_header=1)
+    
+    X_ts_df = pd.read_csv(f'{path}/compass_X_ts.csv')
+    X_val_df = pd.read_csv(f'{path}/compass_X_val.csv')
+    X_train_df = pd.read_csv(f'{path}/compass_X_train.csv')  
     
     knn_param_grid = {
         'weights': ['uniform', 'distance'],               
-        'n_neighbors': [3, 6, 9, 12, 16], 
+        'n_neighbors': [2, 6, 10, 20, 30], 
         'p': [1, 2], 
-        'features': features_combos(X_tr = X_tr, p = [1, 2], n_neighbors = [3, 6, 9, 12, 16],
+        'features_knn': features_combos(X_tr = X_train, p = [1, 2], n_neighbors = [2, 6, 10, 20, 30],
                                     weights = ['uniform', 'distance'], n_total_combos = 1000)
          }
     
@@ -109,24 +115,15 @@ if __name__ == '__main__':
     ]
     
     Parallel(n_jobs=-1)(delayed(results_knn)(
-         X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-         results_function = holdout_results, 
+         X_train = X_train, X_val = X_val, y_train = y_train, X_ts = X_ts, y_ts = y_ts, y_val = y_val, 
          parameter_combo = combo, metrics_to_compute = metrics_to_compute, 
-         fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
-         fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\knn', 
-         val_size=0.2, 
+         sens_feat_train = X_train_df['race'].values,
+         sens_feat_ts = X_ts_df['race'].values,
+         sens_feat_val = X_val_df['race'].values,
+         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\compass\model_results\knn', 
+         model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\compass\knn',
         ) for combo in parameter_combos_knn)
     
-    Parallel(n_jobs=-1)(delayed(results_knn)(
-         X_tr = X_tr, y_tr = y_tr, X_ts = X_ts, y_ts = y_ts, 
-         results_function = full_model_results, 
-         parameter_combo = combo, metrics_to_compute = metrics_to_compute, 
-         fairness_sens_feat_tr = X_tr_df['personal_status'].values, 
-         fairness_sens_feat_ts = X_ts_df['personal_status'].values,
-         output_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Results\german\knn', 
-         model_dir = r'C:\Users\franc\OneDrive\Magistrale\Thesis-Model-Equivalence\Models\german\knn' 
-        ) for combo in parameter_combos_knn)
-    
+   
     
     
