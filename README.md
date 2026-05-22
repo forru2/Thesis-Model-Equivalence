@@ -1,6 +1,4 @@
-# Defining Functional Behavioural Equivalence
-# within Interpretable Models of the
-# Rashomon Set
+# Defining Functional Behavioural Equivalence within Interpretable Models of the Rashomon Set
 
 The Rashomon Effect describes a common phenomenon in machine learning,
 where multiple models can achieve nearly identical predictive performance on
