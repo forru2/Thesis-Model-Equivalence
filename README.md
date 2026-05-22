@@ -24,8 +24,8 @@ space of well-performing models that go beyond mere prediction accuracy and
 are also ethically and behaviourally aligned with human values
 
 **Example Rashomon Set Share per Family:**
-<img width="786" height="631" alt="Family Shares on RS" src="https://github.com/user-attachments/assets/28efcb15-b564-4ada-a0b3-86c416856824" />
+<img width="586" height="431" alt="Family Shares on RS" src="https://github.com/user-attachments/assets/28efcb15-b564-4ada-a0b3-86c416856824" />
 
 **Example Equivalence Clusters Composition:**
-<img width="745" height="402" alt="Clusters Comparison (Test)" src="https://github.com/user-attachments/assets/28a9f625-09b3-4d3a-94b8-b24b2f21ec21" />
+<img width="545" height="202" alt="Clusters Comparison (Test)" src="https://github.com/user-attachments/assets/28a9f625-09b3-4d3a-94b8-b24b2f21ec21" />
 
