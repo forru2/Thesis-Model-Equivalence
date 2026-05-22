@@ -25,8 +25,8 @@ are also ethically and behaviourally aligned with human values
 
 
 **Example Rashomon Set Share per Family:**
-<img width="686" height="531" alt="Family Shares on RS" src="https://github.com/user-attachments/assets/28efcb15-b564-4ada-a0b3-86c416856824" />
+<img width="786" height="631" alt="Family Shares on RS" src="https://github.com/user-attachments/assets/28efcb15-b564-4ada-a0b3-86c416856824" />
 
 **Example Equivalence Clusters Composition:**
-<img width="545" height="302" alt="Clusters Comparison (Test)" src="https://github.com/user-attachments/assets/28a9f625-09b3-4d3a-94b8-b24b2f21ec21" />
+<img width="545" height="252" alt="Clusters Comparison (Test)" src="https://github.com/user-attachments/assets/28a9f625-09b3-4d3a-94b8-b24b2f21ec21" />
 
