@@ -22,3 +22,7 @@ conducted using a clustering-based approach. The results provide stakeholders
 with a “map” of interchangeable solutions, facilitating the exploration of the
 space of well-performing models that go beyond mere prediction accuracy and
 are also ethically and behaviourally aligned with human values
+
+<img width="4986" height="4031" alt="Family Shares on RS" src="https://github.com/user-attachments/assets/28efcb15-b564-4ada-a0b3-86c416856824" />
+<img width="2745" height="1402" alt="Clusters Comparison (Test)" src="https://github.com/user-attachments/assets/28a9f625-09b3-4d3a-94b8-b24b2f21ec21" />
+
